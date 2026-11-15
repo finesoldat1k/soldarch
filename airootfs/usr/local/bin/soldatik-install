@@ -1,0 +1,233 @@
+#!/usr/bin/env bash
+# soldatik-install — установщик Soldatik Linux
+set -euo pipefail
+
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# ─── Загрузка модулей ───
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+source "$SCRIPT_DIR/lib/ui.sh"
+source "$SCRIPT_DIR/lib/detect.sh"
+source "$SCRIPT_DIR/lib/disk.sh"
+source "$SCRIPT_DIR/lib/mount.sh"
+source "$SCRIPT_DIR/lib/base.sh"
+source "$SCRIPT_DIR/lib/chroot.sh"
+source "$SCRIPT_DIR/lib/boot.sh"
+source "$SCRIPT_DIR/lib/de.sh"
+source "$SCRIPT_DIR/lib/extras.sh"
+
+# ═══════════════════════════════════════════════════════════
+# Главная установка
+# ═══════════════════════════════════════════════════════════
+
+show_summary_and_confirm() {
+    clear
+    ui_title "Проверьте параметры установки"
+    ui_hr
+    printf '  Диск              : %s\n' "${CONFIG[disk]} (${CONFIG[disk_size]})"
+    printf '  Разметка          : %s (+ отдельный /home)\n' "${CONFIG[partitioning]}"
+    printf '  Файловая система  : %s\n' "${CONFIG[fs]}"
+    printf '  Swap              : %s (%s)\n' "${CONFIG[swap]}" "${CONFIG[swap_size]}"
+    printf '  Хостнейм          : %s\n' "${CONFIG[hostname]}"
+    printf '  Локаль            : %s\n' "${CONFIG[locale]}"
+    printf '  Часовой пояс      : %s\n' "${CONFIG[timezone]}"
+    printf '  Пользователь      : %s\n' "${CONFIG[username]}"
+    printf '  Сеть              : %s\n' "${CONFIG[network]}"
+    printf '  Доп. пакеты       : %s\n' "${CONFIG[extras]:-нет}"
+    [[ -n "${CONFIG[extras_free]:-}" ]] && \
+        printf '  Свободный список  : %s\n' "${CONFIG[extras_free]}"
+    printf '  Режим загрузки    : %s\n' "${CONFIG[boot_mode]}"
+    ui_hr
+    echo
+
+    ui_warn "Все данные на ${CONFIG[disk]} будут уничтожены!"
+    echo
+
+    if ! ui_confirm "Начать установку?" "n"; then
+        ui_info "Отменено"
+        return 1
+    fi
+
+    # Двойное подтверждение вводом имени диска
+    local typed
+    printf 'Для подтверждения введите %s: ' "${CONFIG[disk]}" >&2
+    IFS= read -r typed </dev/tty
+    if [[ "$typed" != "${CONFIG[disk]}" ]]; then
+        ui_error "Не совпадает. Отменено."
+        return 1
+    fi
+
+    return 0
+}
+
+run_installation() {
+    log "Config: disk=${CONFIG[disk]} fs=${CONFIG[fs]} swap=${CONFIG[swap]} "
+    log "Config: hostname=${CONFIG[hostname]} user=${CONFIG[username]}"
+    log "Config: network=${CONFIG[network]} extras=${CONFIG[extras]}"
+    # Валидации
+    if [[ -z "${CONFIG[disk]}" ]]; then
+        ui_error "Не выбран диск. Пункт 1 главного меню."
+        ui_pause
+        return 1
+    fi
+    if [[ -z "${CONFIG[userpass]}" ]]; then
+        ui_error "Не задан пароль пользователя. Пункт 9."
+        ui_pause
+        return 1
+    fi
+    if [[ -z "${CONFIG[rootpass]}" ]]; then
+        ui_error "Не задан пароль root. Пункт 10."
+        ui_pause
+        return 1
+    fi
+
+    show_summary_and_confirm || return 0
+
+    clear
+    log "=== Installation started ==="
+
+    # ─── 1. Разметка ───
+    if [[ "${CONFIG[partitioning]}" == "auto" ]]; then
+        partition_disk_auto || { ui_error "Ошибка разметки"; ui_pause; return 1; }
+    else
+        partition_disk_manual || { ui_error "Ошибка ручной разметки"; ui_pause; return 1; }
+    fi
+
+    # ─── 2. Форматирование ───
+    format_partitions || { ui_error "Ошибка форматирования"; ui_pause; return 1; }
+
+    # ─── 3. Монтирование ───
+    mount_root || { ui_error "Ошибка монтирования root"; ui_pause; return 1; }
+    mount_efi  || { ui_error "Ошибка монтирования EFI";  ui_pause; return 1; }
+    mount_home || { ui_error "Ошибка монтирования /home"; ui_pause; return 1; }
+    setup_swap || { ui_error "Ошибка создания swap"; ui_pause; return 1; }
+
+    # ─── 4. Базовая система ───
+    run_base_install || { ui_error "Ошибка установки базы"; ui_pause; return 1; }
+
+    # ─── 5. DE (до chroot, чтобы /etc/skel был готов) ───
+    install_hyprland_packages || { ui_error "Ошибка установки Hyprland"; ui_pause; return 1; }
+    deploy_hyprland_configs  || { ui_error "Ошибка конфигов Hyprland"; ui_pause; return 1; }
+
+    # ─── 6. Настройка в chroot ───
+    run_chroot_setup || { ui_error "Ошибка настройки chroot"; ui_pause; return 1; }
+    enable_hyprland_services || { ui_error "Ошибка сервисов DE"; ui_pause; return 1; }
+
+    # ─── 7. Загрузчик ───
+    run_boot_setup || { ui_error "Ошибка установки загрузчика"; ui_pause; return 1; }
+
+    # ─── 8. Размонтирование ───
+    umount_all
+
+    # ─── 9. Финал ───
+    log "=== Installation completed successfully ==="
+
+    clear
+    ui_title "Установка завершена!"
+    ui_success "Soldatik Linux установлен на ${CONFIG[disk]}"
+    echo
+    printf '  Пользователь:  %s\n' "${CONFIG[username]}"
+    printf '  Хостнейм:      %s\n' "${CONFIG[hostname]}"
+    printf '  ФС:            %s\n' "${CONFIG[fs]}"
+    printf '  Swap:          %s\n' "${CONFIG[swap]}"
+    printf '  Графика:       Hyprland\n'
+    echo
+    printf '  Лог:           %s\n' "$LOGFILE"
+    echo
+
+    if ui_confirm "Перезагрузить сейчас?" "n"; then
+        log "Rebooting"
+        reboot
+    else
+        ui_info "Перезагрузка отменена. Извлеките ISO и перезагрузитесь вручную."
+        ui_pause
+    fi
+}
+
+# ═══════════════════════════════════════════════════════════
+# Главное меню
+# ═══════════════════════════════════════════════════════════
+
+main_menu() {
+    while true; do
+        clear
+        ui_title "Soldatik Linux Installer v${INSTALLER_VERSION}"
+
+        local disk_display="${CONFIG[disk]:-не выбран}"
+        [[ -n "${CONFIG[disk_size]}" ]] && disk_display+=" (${CONFIG[disk_size]})"
+
+        local userpass_display="не задан"
+        [[ -n "${CONFIG[userpass]}" ]] && userpass_display="задан"
+
+        local rootpass_display="не задан"
+        [[ -n "${CONFIG[rootpass]}" ]] && rootpass_display="задан"
+
+        local extras_display="${CONFIG[extras]:-нет}"
+        [[ -n "${CONFIG[extras_free]:-}" ]] && extras_display+=" + свой список"
+
+        ui_hr
+        printf '   1) Диск               : %s\n' "$disk_display"
+        printf '   2) Разметка           : %s\n' "${CONFIG[partitioning]}"
+        printf '   3) Файловая система   : %s\n' "${CONFIG[fs]}"
+        printf '   4) Swap               : %s (%s)\n' "${CONFIG[swap]}" "${CONFIG[swap_size]}"
+        printf '   5) Хостнейм           : %s\n' "${CONFIG[hostname]}"
+        printf '   6) Локаль             : %s\n' "${CONFIG[locale]}"
+        printf '   7) Часовой пояс       : %s\n' "${CONFIG[timezone]}"
+        printf '   8) Пользователь       : %s\n' "${CONFIG[username]}"
+        printf '   9) Пароль юзера       : %s\n' "$userpass_display"
+        printf '  10) Пароль root        : %s\n' "$rootpass_display"
+        printf '  11) Сеть               : %s\n' "${CONFIG[network]}"
+        printf '  12) Доп. пакеты        : %s\n' "$extras_display"
+        ui_hr
+        printf '   %sI)%s НАЧАТЬ УСТАНОВКУ\n' "$C_GREEN" "$C_RESET"
+        printf '   %sQ)%s Выход\n' "$C_RED" "$C_RESET"
+        ui_hr
+        echo
+
+        local choice
+        read -rp "Выберите пункт: " choice </dev/tty
+
+        case "${choice,,}" in
+            1)  menu_select_disk ;;
+            2)  menu_select_partitioning ;;
+            3)  menu_select_fs ;;
+            4)  menu_select_swap ;;
+            5)  CONFIG[hostname]=$(ui_prompt "Имя хоста" "${CONFIG[hostname]}") ;;
+            6)  menu_select_locale ;;
+            7)  menu_select_timezone ;;
+            8)  menu_select_username ;;
+            9)  CONFIG[userpass]=$(ui_password "Пароль пользователя '${CONFIG[username]}'") ;;
+            10) CONFIG[rootpass]=$(ui_password "Пароль root") ;;
+            11) menu_select_network ;;
+            12) menu_select_extras ;;
+            i)  run_installation ;;
+            q)  ui_info "Выход."; log "User exit"; exit 0 ;;
+            *)  ui_error "Неверный выбор" ;;
+        esac
+    done
+}
+
+# ═══════════════════════════════════════════════════════════
+# Точка входа
+# ═══════════════════════════════════════════════════════════
+
+require_root
+init_log "$@"
+init_config
+detect_boot_mode
+setup_trap
+
+# Кириллица
+[[ -f /usr/share/kbd/consolefonts/ter-v16n.psf.gz ]] && \
+    setfont ter-v16n 2>/dev/null || true
+
+# Проверка утилит
+if ! check_requirements; then
+    ui_error "Не хватает утилит. Запускайте из Live-ISO Soldatik Linux."
+    exit 1
+fi
+
+require_internet
+
+main_menu

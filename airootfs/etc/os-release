@@ -1,0 +1,11 @@
+NAME="Soldatik Linux"
+PRETTY_NAME="Soldatik Linux"
+ID=soldatik
+ID_LIKE=arch
+BUILD_ID=rolling
+ANSI_COLOR="38;2;222;56;43"
+HOME_URL="https://github.com/finesoldatik/"
+DOCUMENTATION_URL="https://wiki.archlinux.org/"
+SUPPORT_URL="https://bbs.archlinux.org/"
+BUG_REPORT_URL="https://gitlab.archlinux.org/groups/archlinux/-/issues"
+LOGO=soldatik

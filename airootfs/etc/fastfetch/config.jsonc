@@ -1,0 +1,38 @@
+{
+  "$schema": "https://github.com/fastfetch-cli/fastfetch/raw/dev/doc/json_schema.json",
+  "logo": {
+    "source": "/etc/fastfetch/logo.txt",
+    "type": "file",
+    "padding": { "top": 1, "left": 2 },
+    "color": {
+      "1": "38;2;222;56;43"
+    }
+  },
+  "display": {
+    "separator": " → ",
+    "color": {
+        "keys": "38;2;222;56;43",     // Цвет для названий пунктов (например, "OS")
+        "title": "38;2;222;56;43",    // Цвет для заголовка (имя пользователя@хост)
+        "output": "38;2;222;56;43",   // Цвет для значений (например, "Soldatik Linux")
+        "separator": "38;2;222;56;43" // Цвет для разделителя " → "
+    }
+  },
+  "modules": [
+    "title",
+    "separator",
+    "os",
+    "host",
+    "kernel",
+    "uptime",
+    "packages",
+    "shell",
+    "display",
+    "terminal",
+    "cpu",
+    "gpu",
+    "memory",
+    "disk",
+    "localip",
+    "locale"
+  ]
+}
