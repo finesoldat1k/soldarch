@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+# soldarch-install — установщик Soldarch
+set -Eeuo pipefail
+
+readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+# shellcheck source=lib/common.sh
+source "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source=lib/ui.sh
+source "$SCRIPT_DIR/lib/ui.sh"
+# shellcheck source=lib/disk.sh
+source "$SCRIPT_DIR/lib/disk.sh"
+# shellcheck source=lib/install.sh
+source "$SCRIPT_DIR/lib/install.sh"
+
+select_password_interactive() {
+    if [[ -n "$PASSWORD" ]]; then
+        return 0
+    fi
+    ui_step "Пароль пользователя ${USERNAME}"
+    ui_info "Root будет заблокирован. Пользователь ${USERNAME} получит sudo."
+    PASSWORD=$(ui_password "Пароль для ${USERNAME}")
+    [[ -n "$PASSWORD" ]] || die "Пароль не задан"
+}
+
+interactive_install() {
+    clear
+    ui_title "Soldarch — установка Arch Linux с Hyprland"
+    ui_info "Установщик работает без интернета: все пакеты уже внутри ISO."
+    ui_info "Пользователь: ${USERNAME}, хостнейм: ${HOSTNAME}, графика: Hyprland."
+    printf '\n'
+
+    if ! select_target_interactive; then
+        ui_info "Установка отменена."
+        exit 0
+    fi
+
+    select_password_interactive
+
+    if ! run_installation; then
+        exit 0
+    fi
+}
+
+auto_install() {
+    ui_title "Soldarch — автоматическая установка"
+    ui_info "Цель: ${TARGET_MODE} ${TARGET_DISK}${ROOT_PART}"
+    select_target_auto
+    [[ -n "$PASSWORD" ]] || die "В авторежиме не задан пароль (--password / soldarch.password=)"
+    run_installation
+}
+
+main() {
+    parse_cmdline
+    parse_args "$@"
+
+    require_root
+    acquire_lock
+    init_log
+
+    # Кириллица в live-консоли.
+    if [[ -f /usr/share/kbd/consolefonts/ter-v16n.psf.gz ]]; then
+        setfont ter-v16n 2>/dev/null || true
+    fi
+
+    detect_boot_mode
+    check_requirements
+    load_packages
+    setup_traps
+
+    log "Auto=$AUTO mode=$TARGET_MODE disk=$TARGET_DISK part=$ROOT_PART efi=$EFI_PART"
+
+    if (( AUTO == 1 )); then
+        auto_install
+    else
+        interactive_install
+    fi
+}
+
+main "$@"

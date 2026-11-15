@@ -1,80 +1,47 @@
-# --- Базовое ядро и прошивки ---
+# Soldarch live ISO — только то, что нужно для загрузки и установщика.
 base
 linux
 linux-firmware
 amd-ucode
 intel-ucode
-
-# --- Дополнительные прошивки для Wi-Fi и Bluetooth ---
-linux-firmware-broadcom
-linux-firmware-atheros
-linux-firmware-mediatek
-linux-firmware-realtek
-linux-firmware-intel
-linux-firmware-marvell
-linux-firmware-qlogic
-
-# --- Аудио ---
-sof-firmware
-alsa-ucm-conf
-alsa-utils
-
-# --- Bluetooth ---
-bluez
-bluez-utils
-
-# --- Файловые системы ---
-dosfstools
-e2fsprogs
-btrfs-progs
-xfsprogs
-exfatprogs
-ntfs-3g
-f2fs-tools
-jfsutils
-squashfs-tools
-
-# --- Утилиты для работы с дисками ---
-parted
-gptfdisk
-smartmontools
-nvme-cli
-hdparm
-dmidecode
-usbutils
-pciutils
-
-# --- Сеть ---
-networkmanager
-iwd
-iw
-ethtool
-wireless-regdb
-
-# --- Загрузчики и установка ---
-grub
-efibootmgr
-syslinux
-arch-install-scripts
 mkinitcpio
 mkinitcpio-archiso
-
-# --- Базовые утилиты ---
+syslinux
+grub
+efibootmgr
+dosfstools
+e2fsprogs
+parted
+gptfdisk
+arch-install-scripts
+networkmanager
+iwd
+wpa_supplicant
+iw
+wireless-regdb
+ethtool
+bluez
+bluez-utils
 nano
 vim
-mc
 sudo
+openssl
+util-linux
+coreutils
+findutils
+grep
+sed
+gawk
+diffutils
+procps-ng
+psmisc
+iproute2
+lsb-release
+terminus-font
 fastfetch
-reflector
+less
+which
+rsync
 man-db
 man-pages
-diffutils
-rsync
-pv
-openssl
-
-# --- other ---
-cryptsetup
-lvm2
-terminus-font
-edk2-shell
+pacman-contrib

@@ -1,0 +1,6 @@
+[Unit]
+Description=zapret ip/host list update
+
+[Service]
+Type=oneshot
+ExecStart=/opt/zapret/ipset/get_config.sh

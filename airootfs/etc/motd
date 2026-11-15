@@ -1,4 +1,12 @@
-installation: soldatik-install
-telegram: t.me/soldatiklinux
 
+  Soldarch Linux — live-установщик
+  ────────────────────────────────
+  Установщик запускается автоматически на tty1.
+  Если он закрылся, запустите вручную:
+
+      soldarch-install
+
+  В установленной системе будет чистый Arch Linux:
+  пользователь iam, хостнейм arch, Hyprland, SDDM,
+  Throne и сервис zapret.
 

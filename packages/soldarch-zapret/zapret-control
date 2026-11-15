@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# Управление сервисом zapret (пакет Soldarch)
+set -euo pipefail
+
+usage() {
+    cat <<'EOF'
+Использование: zapret <команда>
+
+Команды:
+  status    состояние сервиса
+  start     запустить
+  stop      остановить
+  restart   перезапустить
+  enable    добавить в автозагрузку
+  disable   убрать из автозагрузки
+  log       журнал сервиса
+  config    открыть /opt/zapret/config в редакторе
+  test      проверить конфигурацию запуском в foreground (Ctrl+C для выхода)
+EOF
+}
+
+cmd="${1:-status}"
+case "$cmd" in
+    status)  systemctl status --no-pager zapret ;;
+    start)   systemctl start zapret && systemctl --no-pager status zapret ;;
+    stop)    systemctl stop zapret ;;
+    restart) systemctl restart zapret && systemctl --no-pager status zapret ;;
+    enable)  systemctl enable zapret ;;
+    disable) systemctl disable zapret ;;
+    log)     journalctl -u zapret -f ;;
+    config)  "${EDITOR:-nano}" /opt/zapret/config ;;
+    test)    /opt/zapret/init.d/sysv/zapret start ;;
+    -h|--help|help) usage ;;
+    *) usage; exit 1 ;;
+esac

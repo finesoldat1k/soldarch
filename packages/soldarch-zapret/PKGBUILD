@@ -1,0 +1,63 @@
+# Maintainer: Soldarch
+pkgname=soldarch-zapret
+pkgver=72.13
+pkgrel=1
+pkgdesc="Zapret DPI bypass with Snowy-Fluffy configuration, packaged for offline install"
+arch=('x86_64')
+url="https://github.com/bol-van/zapret"
+license=('GPL-2.0-only')
+depends=('iptables' 'ipset' 'curl')
+optdepends=('git: обновление списков и конфигураций вручную')
+provides=('zapret')
+conflicts=('zapret' 'zapret-git' 'zapret2' 'zapret2-git')
+backup=(
+  'opt/zapret/config'
+  'opt/zapret/ipset/zapret-hosts-user.txt'
+  'opt/zapret/ipset/ipset-discord.txt'
+)
+options=('!strip' '!debug')
+source=(
+  "zapret.tar.gz::https://github.com/bol-van/zapret/releases/download/v${pkgver}/zapret-v${pkgver}.tar.gz"
+  "zapret.cfgs.tar.gz::https://github.com/Snowy-Fluffy/zapret.cfgs/archive/a91a433939db2e0164997f5e8cba3bcf15255549.tar.gz"
+  'zapret-control'
+  'zapret.service'
+  'zapret-list-update.service'
+  'zapret-list-update.timer'
+)
+sha256sums=('SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP' 'SKIP')
+
+package() {
+  local cfgs
+  cfgs=$(find "$srcdir" -maxdepth 1 -type d -name 'zapret.cfgs-*' | head -n1)
+  [[ -n "$cfgs" ]] || { echo "zapret.cfgs not found" >&2; return 1; }
+
+  install -d "$pkgdir/opt/zapret"
+  cp -a "$srcdir/zapret-v${pkgver}/." "$pkgdir/opt/zapret/"
+
+  install -d "$pkgdir/opt/zapret/zapret.cfgs"
+  cp -a "$cfgs/." "$pkgdir/opt/zapret/zapret.cfgs/"
+  rm -rf "$pkgdir/opt/zapret/zapret.cfgs/.git"
+
+  # Стратегия Snowy-Fluffy «general» по умолчанию.
+  install -Dm644 "$pkgdir/opt/zapret/zapret.cfgs/configurations/general" \
+    "$pkgdir/opt/zapret/config"
+
+  # Fake-бинарники, списки и пользовательские хосты.
+  install -d "$pkgdir/opt/zapret/files/fake"
+  cp -a "$pkgdir/opt/zapret/zapret.cfgs/bin/." "$pkgdir/opt/zapret/files/fake/"
+  install -Dm644 "$pkgdir/opt/zapret/zapret.cfgs/lists/list-basic.txt" \
+    "$pkgdir/opt/zapret/ipset/zapret-hosts-user.txt"
+  install -Dm644 "$pkgdir/opt/zapret/zapret.cfgs/lists/ipset-discord.txt" \
+    "$pkgdir/opt/zapret/ipset/ipset-discord.txt"
+  : >"$pkgdir/opt/zapret/ipset/ipset-game.txt"
+
+  install -Dm755 "$srcdir/zapret-control" "$pkgdir/usr/bin/zapret"
+  install -Dm644 "$srcdir/zapret.service" "$pkgdir/usr/lib/systemd/system/zapret.service"
+  install -Dm644 "$srcdir/zapret-list-update.service" \
+    "$pkgdir/usr/lib/systemd/system/zapret-list-update.service"
+  install -Dm644 "$srcdir/zapret-list-update.timer" \
+    "$pkgdir/usr/lib/systemd/system/zapret-list-update.timer"
+
+  install -Dm644 "$pkgdir/opt/zapret/README.md" \
+    "$pkgdir/usr/share/doc/soldarch-zapret/README.md" 2>/dev/null || true
+}

@@ -1,356 +1,416 @@
 #!/usr/bin/env bash
-# lib/disk.sh — выбор диска, разметка, форматирование
+# lib/disk.sh — выбор цели, разметка, форматирование и монтирование
 
-# ═══════════════════════════════════════════════════════════
-# Меню
-# ═══════════════════════════════════════════════════════════
-
-menu_select_disk() {
-    local disks=() display=()
-
-    while IFS='|' read -r name info; do
-        [[ -z "$name" ]] && continue
-        disks+=("/dev/$name")
-        display+=("$info")
-    done < <(list_disks_detailed)
-
-    if [[ ${#disks[@]} -eq 0 ]]; then
-        ui_error "Диски не найдены"
-        ui_pause
-        return 1
+# ─────────────────────────────────────────────────────────────
+# Списки устройств
+# ─────────────────────────────────────────────────────────────
+# lsblk -P печатает NAME="..." SIZE="..." ...; обычный read с пустым
+# FSTYPE сдвигал бы поля, поэтому разбираем пары ключ=значение.
+lsblk_field() {
+    local line="$1" key="$2"
+    if [[ "$line" =~ (^|[[:space:]])${key}=\"([^\"]*)\" ]]; then
+        printf '%s' "${BASH_REMATCH[2]}"
     fi
-
-    display+=("Отмена")
-
-    local n
-    n=$(ui_menu "Выберите диск для установки:" "${display[@]}")
-
-    # Отмена
-    (( n == ${#disks[@]} + 1 )) && return 1
-
-    local disk="${disks[$((n-1))]}"
-    local bytes
-    bytes=$(blockdev --getsize64 "$disk")
-    local gb=$(( bytes / 1024 / 1024 / 1024 ))
-
-    if (( gb < 8 )); then
-        ui_error "Диск слишком мал: ${gb} ГБ (минимум 8 ГБ)"
-        ui_pause
-        return 1
-    fi
-
-    CONFIG[disk]="$disk"
-    CONFIG[disk_size]=$(numfmt --to=iec --suffix=B "$bytes")
-
-    ui_success "Выбран: $disk (${CONFIG[disk_size]})"
-    sleep 1
 }
 
-menu_select_partitioning() {
-    local n
-    n=$(ui_menu "Способ разметки:" \
-        "Автоматическая (рекомендуется)" \
-        "Ручная (cfdisk)")
-
-    case "$n" in
-        1) CONFIG[partitioning]="auto" ;;
-        2) CONFIG[partitioning]="manual" ;;
-    esac
+list_target_disks() {
+    local live line name size type model
+    live=$(live_disk || true)
+    while IFS= read -r line; do
+        name=$(lsblk_field "$line" NAME)
+        size=$(lsblk_field "$line" SIZE)
+        type=$(lsblk_field "$line" TYPE)
+        model=$(lsblk_field "$line" MODEL)
+        [[ "$type" == "disk" ]] || continue
+        case "$name" in
+            /dev/loop*|/dev/sr*|/dev/zram*|/dev/ram*|/dev/dm-*|/dev/md*) continue ;;
+        esac
+        [[ -n "$live" && "$name" == "$live" ]] && continue
+        model="${model:-без модели}"
+        printf '%s|%s  %s\n' "$name" "$size" "$model"
+    done < <(lsblk -dpno NAME,SIZE,TYPE,MODEL -P 2>/dev/null)
 }
 
-menu_select_fs() {
-    CONFIG[fs]=$(ui_choose "Файловая система для корня:" \
-        "ext4|Классика, надёжно (рекомендуется)" \
-        "btrfs|Снапшоты, сжатие" \
-        "xfs|Для больших файлов")
+list_all_partitions() {
+    local live line name size fstype type
+    live=$(live_disk || true)
+    while IFS= read -r line; do
+        name=$(lsblk_field "$line" NAME)
+        size=$(lsblk_field "$line" SIZE)
+        fstype=$(lsblk_field "$line" FSTYPE)
+        type=$(lsblk_field "$line" TYPE)
+        [[ "$type" == "part" ]] || continue
+        [[ -n "$live" && "$name" == "$live"* ]] && continue
+        printf '%s|%s  %s  %s\n' "$name" "$size" "${fstype:-нет ФС}" "${name##*/}"
+    done < <(lsblk -pno NAME,SIZE,FSTYPE,TYPE -P 2>/dev/null)
 }
 
-menu_select_swap() {
-    local n
-    n=$(ui_menu "Swap:" \
-        "Без swap" \
-        "Swap-файл 2 ГБ" \
-        "Swap-файл 4 ГБ" \
-        "Swap-файл 8 ГБ")
-
-    case "$n" in
-        1) CONFIG[swap]="none"; CONFIG[swap_size]="0" ;;
-        2) CONFIG[swap]="file"; CONFIG[swap_size]="2G" ;;
-        3) CONFIG[swap]="file"; CONFIG[swap_size]="4G" ;;
-        4) CONFIG[swap]="file"; CONFIG[swap_size]="8G" ;;
-    esac
+list_esp_candidates() {
+    local live line name size fstype parttype type
+    live=$(live_disk || true)
+    while IFS= read -r line; do
+        name=$(lsblk_field "$line" NAME)
+        size=$(lsblk_field "$line" SIZE)
+        fstype=$(lsblk_field "$line" FSTYPE)
+        parttype=$(lsblk_field "$line" PARTTYPE)
+        type=$(lsblk_field "$line" TYPE)
+        [[ -n "$name" && "$type" == "part" ]] || continue
+        [[ -n "$live" && "$name" == "$live"* ]] && continue
+        if [[ "${parttype,,}" == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" || "$fstype" == "vfat" ]]; then
+            printf '%s|%s  %s  ESP\n' "$name" "$size" "${fstype:-?}"
+        fi
+    done < <(lsblk -pno NAME,SIZE,FSTYPE,PARTTYPE,TYPE -P 2>/dev/null)
 }
 
-# ═══════════════════════════════════════════════════════════
-# Автоматическая разметка
-# ═══════════════════════════════════════════════════════════
-
-partition_disk_auto() {
-    local disk="${CONFIG[disk]}"
-    local mode="${CONFIG[boot_mode]}"
-    local root_start_mb root_end_mb
-
-    ui_step "Разметка $disk (режим: $mode, схема: ESP + root + /home)"
-    log "Auto partition: disk=$disk mode=$mode fs=${CONFIG[fs]}"
-
-    # ─── Полная очистка диска ───
-    ui_step "Очистка $disk от старых разделов и ФС"
-
-    # 1. Размонтировать всё, что относится к этому диску
-    local part
-    while read -r part; do
-        [[ -z "$part" ]] && continue
-        run_cmd umount -f "$part" 2>/dev/null || true
-    done < <(lsblk -lpno NAME "$disk" | tac)
-
-    run_cmd umount -R "$MOUNTPOINT" 2>/dev/null || true
-    run_cmd swapoff -a || true
-
-    # 2. Удалить все существующие разделы
-    if command -v sgdisk &>/dev/null; then
-        run_cmd sgdisk --zap-all "$disk" || {
-            ui_warn "sgdisk --zap-all не сработал, продолжаем"
-        }
-    fi
-
-    # 3. Стереть сигнатуры файловых систем
-    run_cmd wipefs -a "$disk" || {
-        ui_error "wipefs $disk не удался"
-        return 1
-    }
-
-    # 4. Затереть начало и конец диска (первые/последние 10 МБ)
-    #    Это удаляет остатки GPT backup и MBR bootstrap
-    ui_step "Затирание первые и последние 10 МБ диска"
-    run_cmd dd if=/dev/zero of="$disk" bs=1M count=10 conv=fsync status=none || {
-        ui_error "dd (начало) не удался"
-        return 1
-    }
-    local disk_size_mb=$(( $(blockdev --getsize64 "$disk") / 1024 / 1024 ))
-    run_cmd dd if=/dev/zero of="$disk" bs=1M count=10 seek=$(( disk_size_mb - 10 )) \
-        conv=fsync status=none || {
-        ui_error "dd (конец) не удался"
-        return 1
-    }
-
-    # 5. Синхронизировать и перечитать таблицу
-    run_cmd sync
-    run_cmd partprobe "$disk" 2>/dev/null || true
-    sleep 1
-
-    # ─── Считаем размер root ───
-    local total_mb
-    total_mb=$(( $(blockdev --getsize64 "$disk") / 1024 / 1024 ))
-
-    local root_mb
-    if (( total_mb >= 100 * 1024 )); then
-        root_mb=$(( 40 * 1024 ))         # 40 GiB для больших дисков
-    else
-        root_mb=$(( total_mb / 2 ))      # 50% для маленьких
-    fi
-
-    run_cmd parted -s "$disk" mklabel gpt || return 1
-
-    if [[ "$mode" == "uefi" ]]; then
-        # ESP + root
-        run_cmd parted -s "$disk" mkpart ESP fat32 1MiB 513MiB || return 1
-        run_cmd parted -s "$disk" set 1 esp on                 || return 1
-
-        root_start_mb=513
-        root_end_mb=$(( 513 + root_mb ))
-
-        run_cmd parted -s "$disk" mkpart root "${CONFIG[fs]}" "${root_start_mb}MiB" "${root_end_mb}MiB" || return 1
-        run_cmd parted -s "$disk" mkpart home "${CONFIG[fs]}" "${root_end_mb}MiB" 100%                  || return 1
-
-        CONFIG[efi_part]=$(part_name "$disk" 1)
-        CONFIG[root_part]=$(part_name "$disk" 2)
-        CONFIG[home_part]=$(part_name "$disk" 3)
-    else
-        run_cmd parted -s "$disk" mkpart bios_grub 1MiB 2MiB         || return 1
-        run_cmd parted -s "$disk" set 1 bios_grub on                 || return 1
-
-        root_start_mb=2
-        root_end_mb=$(( 2 + root_mb ))
-
-        run_cmd parted -s "$disk" mkpart root "${CONFIG[fs]}" "${root_start_mb}MiB" "${root_end_mb}MiB" || return 1
-        run_cmd parted -s "$disk" mkpart home "${CONFIG[fs]}" "${root_end_mb}MiB" 100%                        || return 1
-
-        CONFIG[efi_part]=""
-        CONFIG[root_part]=$(part_name "$disk" 2)
-        CONFIG[home_part]=$(part_name "$disk" 3)
-    fi
-
-    run_cmd partprobe "$disk" || {
-        ui_error "partprobe $disk не удался"
-        return 1
-    }
-    sleep 2
-
-    CONFIG[disk_formatted]="y"
-    ui_success "Диск размечен: root=${root_mb}MiB, home=остаток"
-    log "EFI=${CONFIG[efi_part]} ROOT=${CONFIG[root_part]} HOME=${CONFIG[home_part]}"
+partition_number_from_path() {
+    lsblk -no PARTN "$1" 2>/dev/null | head -n1 | tr -d ' '
 }
 
-# ═══════════════════════════════════════════════════════════
-# Ручная разметка (cfdisk)
-# ═══════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────
+# Выбор цели
+# ─────────────────────────────────────────────────────────────
+select_target_interactive() {
+    while true; do
+        local -a disks=() items=()
+        local name info
+        while IFS='|' read -r name info; do
+            [[ -n "$name" ]] || continue
+            disks+=("$name")
+            items+=("$info")
+        done < <(list_target_disks)
 
-partition_disk_manual() {
-    local disk="${CONFIG[disk]}"
+        items+=("Установить в существующий раздел (dual-boot)")
 
-    clear
-    ui_title "Ручная разметка $disk"
+        ui_title "Куда установить Soldarch?"
+        ui_info "Режим загрузки: ${BOOT_MODE^^}"
+        ui_info "Данные на выбранном диске будут полностью уничтожены."
+        printf '\n'
 
-    echo
-    ui_info "Сейчас запустится cfdisk — интерактивный редактор разделов."
-    ui_info "Разметьте диск вручную, затем выйдите (Quit)."
-    echo
-    ui_info "Рекомендуемая схема для UEFI:"
-    ui_info "  1) 512 МБ, тип: EFI System"
-    ui_info "  2) Остальное, тип: Linux filesystem"
-    echo
-    ui_info "Рекомендуемая схема для BIOS:"
-    ui_info "  1) 1 МБ, тип: BIOS boot"
-    ui_info "  2) Остальное, тип: Linux filesystem"
-    echo
-    ui_info "⚠  Не форматируйте разделы внутри cfdisk — это сделает установщик."
-    echo
-    ui_pause
+        local choice
+        choice=$(ui_menu "Выберите диск или раздел:" "${items[@]}") || return 1
+        (( choice == 0 )) && return 1
 
-    run_cmd umount -R "$MOUNTPOINT" || true
-    run_cmd swapoff -a || true
-
-    # cfdisk интерактивный — без run_cmd, без редиректов
-    cfdisk "$disk" || {
-        ui_error "cfdisk завершился с ошибкой"
-        ui_pause
-        return 1
-    }
-
-    run_cmd partprobe "$disk" || {
-        ui_error "partprobe $disk не удался"
-        return 1
-    }
-    sleep 2
-
-    # Собираем разделы
-    local parts=() display=()
-    while read -r name size fstype; do
-        [[ -z "$name" ]] && continue
-        parts+=("/dev/$name")
-        display+=("$name   $size   ${fstype:-—}")
-    done < <(lsblk -lno NAME,SIZE,FSTYPE "$disk" | tail -n +2)
-
-    if [[ ${#parts[@]} -eq 0 ]]; then
-        ui_error "На диске нет разделов"
-        ui_pause
-        return 1
-    fi
-
-    # Выбор root
-    local n
-    n=$(ui_menu "Какой раздел использовать как / (root)?" "${display[@]}")
-    CONFIG[root_part]="${parts[$((n-1))]}"
-
-    # Выбор EFI (только для UEFI)
-    if [[ "${CONFIG[boot_mode]}" == "uefi" ]]; then
-        n=$(ui_menu "Какой раздел использовать как /boot/efi?" "${display[@]}")
-        CONFIG[efi_part]="${parts[$((n-1))]}"
-    else
-        CONFIG[efi_part]=""
-    fi
-
-    # ─── Опционально: /home ───
-    CONFIG[home_part]=""
-    if ui_confirm "Использовать отдельный раздел для /home?" "n"; then
-        n=$(ui_menu "Какой раздел использовать как /home?" "${display[@]}")
-        CONFIG[home_part]="${parts[$((n-1))]}"
-        log "Manual: HOME=${CONFIG[home_part]}"
-    fi
-
-    CONFIG[disk_formatted]="y"
-    ui_success "Разделы выбраны"
-    log "Manual: EFI=${CONFIG[efi_part]} ROOT=${CONFIG[root_part]}"
-}
-
-# ═══════════════════════════════════════════════════════════
-# Форматирование
-# ═══════════════════════════════════════════════════════════
-
-format_partitions() {
-    local root="${CONFIG[root_part]}"
-    local efi="${CONFIG[efi_part]}"
-    local home="${CONFIG[home_part]}"
-    local fs="${CONFIG[fs]}"
-
-    [[ -z "$root" ]] && {
-        ui_error "Root-раздел не задан"
-        return 1
-    }
-
-    # ─── EFI ───
-    if [[ -n "$efi" ]]; then
-        ui_step "Форматирование EFI: $efi"
-
-        if mountpoint -q "$efi" 2>/dev/null; then
-            ui_warn "$efi уже смонтирован — размонтируем"
-            run_cmd umount "$efi" || true
+        if (( choice == ${#items[@]} )); then
+            select_existing_partition || continue
+            return 0
         fi
 
-        run_cmd wipefs -a "$efi" || { ui_error "wipefs $efi не удался"; return 1; }
-        run_cmd mkfs.fat -F32 -I "$efi" || { ui_error "mkfs.fat $efi не удался"; return 1; }
+        local disk="${disks[$((choice - 1))]}"
+        local gb
+        gb=$(( $(blockdev --getsize64 "$disk") / 1024 / 1024 / 1024 ))
+        if (( gb < 32 )); then
+            ui_error "Диск слишком мал: ${gb} ГБ. Нужно минимум 32 ГБ."
+            ui_pause
+            continue
+        fi
 
-        local efi_type
-        efi_type=$(blkid -s TYPE -o value "$efi" 2>/dev/null)
-        [[ "$efi_type" != "vfat" ]] && {
-            ui_error "$efi не vfat (получено: ${efi_type:-пусто})"
-            return 1
-        }
-        ui_success "EFI отформатирован (vfat)"
-    fi
-
-    # ─── Root ───
-    _format_one "$root" "$fs" "root" || return 1
-
-    # ─── Home ───
-    if [[ -n "$home" ]]; then
-        _format_one "$home" "$fs" "home" || return 1
-    fi
-
-    ui_success "Разделы отформатированы"
+        TARGET_MODE="disk"
+        TARGET_DISK="$disk"
+        PARTITION_MODE=0
+        ui_warn "Весь диск $disk (${gb} ГБ) будет размечен заново."
+        if (( gb < 48 )); then
+            ui_warn "Для полного набора приложений рекомендуется диск от 48 ГБ."
+        fi
+        if ! ui_confirm "Стереть $disk и продолжить?" "n"; then
+            continue
+        fi
+        local typed
+        typed=$(ui_prompt "Для подтверждения введите YES" "")
+        if [[ "${typed^^}" != "YES" ]]; then
+            ui_error "Подтверждение не получено"
+            ui_pause
+            continue
+        fi
+        return 0
+    done
 }
 
-# ─── Вспомогательная: форматирование одного раздела ───
-_format_one() {
-    local part="$1" fs="$2" label="$3"
-
-    ui_step "Форматирование /$label: $part"
-
-    if mountpoint -q "$part" 2>/dev/null; then
-        ui_warn "$part уже смонтирован — размонтируем"
-        run_cmd umount "$part" || true
-    fi
-
-    run_cmd wipefs -a "$part" || {
-        ui_error "wipefs $part не удался"
-        return 1
-    }
-
-    case "$fs" in
-        ext4)  run_cmd mkfs.ext4  -F "$part" || { ui_error "mkfs.ext4 $part не удался";  return 1; } ;;
-        btrfs) run_cmd mkfs.btrfs -f "$part" || { ui_error "mkfs.btrfs $part не удался"; return 1; } ;;
-        xfs)   run_cmd mkfs.xfs   -f "$part" || { ui_error "mkfs.xfs $part не удался";   return 1; } ;;
-        *)     ui_error "Неизвестная ФС: $fs"; return 1 ;;
-    esac
-
-    local part_type
-    part_type=$(blkid -s TYPE -o value "$part" 2>/dev/null)
-
-    if [[ "$part_type" != "$fs" ]]; then
-        ui_error "$part не $fs после форматирования (получено: ${part_type:-пусто})"
+select_existing_partition() {
+    if [[ "$BOOT_MODE" == "bios" ]]; then
+        ui_error "Установка в существующий раздел поддерживается только в UEFI-режиме."
+        ui_error "В BIOS нужен отдельный BIOS boot раздел; используйте установку на весь диск."
+        ui_pause
         return 1
     fi
 
-    ui_success "/$label отформатирован ($fs)"
+    local -a parts=() items=()
+    local name info
+    while IFS='|' read -r name info; do
+        [[ -n "$name" ]] || continue
+        parts+=("$name")
+        items+=("$info")
+    done < <(list_all_partitions)
+
+    if (( ${#parts[@]} == 0 )); then
+        ui_error "Разделы не найдены"
+        ui_pause
+        return 1
+    fi
+
+    local choice
+    choice=$(ui_menu "Какой раздел использовать как корень /? Он будет отформатирован в ext4:" "${items[@]}") || return 1
+    (( choice == 0 )) && return 1
+    local root="${parts[$((choice - 1))]}"
+
+    local size_mb
+    size_mb=$(( $(blockdev --getsize64 "$root") / 1024 / 1024 ))
+    if (( size_mb < 24 * 1024 )); then
+        ui_error "Раздел слишком мал: $((size_mb / 1024)) ГБ. Нужно минимум 24 ГБ."
+        ui_pause
+        return 1
+    fi
+
+    ROOT_PART="$root"
+    TARGET_MODE="partition"
+    PARTITION_MODE=1
+    HOME_PART=""
+    EFI_PART=""
+
+    select_esp_interactive || return 1
     return 0
+}
+
+select_esp_interactive() {
+    local -a esps=() items=()
+    local name info
+    while IFS='|' read -r name info; do
+        [[ -n "$name" ]] || continue
+        esps+=("$name")
+        items+=("$info")
+    done < <(list_esp_candidates)
+
+    if (( ${#esps[@]} == 0 )); then
+        ui_error "Не найден EFI-раздел (ESP, vfat). Для UEFI-установки он обязателен."
+        ui_pause
+        return 1
+    fi
+
+    if (( ${#esps[@]} == 1 )); then
+        EFI_PART="${esps[0]}"
+        ui_info "Используется существующий ESP: $EFI_PART"
+    else
+        local choice
+        choice=$(ui_menu "Какой раздел использовать как /boot/efi? Он НЕ будет форматироваться:" "${items[@]}") || return 1
+        (( choice == 0 )) && return 1
+        EFI_PART="${esps[$((choice - 1))]}"
+    fi
+
+    ESP_DISK="/dev/$(disk_of_part "$EFI_PART")"
+    ESP_NUM=$(partition_number_from_path "$EFI_PART")
+    if [[ -z "$ESP_NUM" || ! -b "$ESP_DISK" ]]; then
+        ui_error "Не удалось определить диск ESP: $EFI_PART"
+        return 1
+    fi
+    return 0
+}
+
+select_target_auto() {
+    if [[ "$TARGET_MODE" == "disk" ]]; then
+        [[ -b "$TARGET_DISK" ]] || die "Диск не найден: $TARGET_DISK"
+        [[ "$(lsblk -dno TYPE "$TARGET_DISK" 2>/dev/null)" == "disk" ]] || \
+            die "Это не целый диск: $TARGET_DISK"
+        local live
+        live=$(live_disk || true)
+        [[ -n "$live" && "$TARGET_DISK" == "$live" ]] && die "Нельзя установить на диск, с которого загружен live-ISO"
+        PARTITION_MODE=0
+        TARGET_DISK="$(readlink -f "$TARGET_DISK")"
+        return 0
+    fi
+
+    if [[ "$TARGET_MODE" == "partition" ]]; then
+        [[ -b "$ROOT_PART" ]] || die "Раздел не найден: $ROOT_PART"
+        [[ "$(lsblk -dno TYPE "$ROOT_PART" 2>/dev/null)" == "part" ]] || \
+            die "Это не раздел: $ROOT_PART"
+        PARTITION_MODE=1
+        TARGET_MODE="partition"
+        HOME_PART=""
+        ROOT_PART="$(readlink -f "$ROOT_PART")"
+
+        if [[ "$BOOT_MODE" == "bios" ]]; then
+            die "Установка в раздел в BIOS не поддерживается. Используйте --disk."
+        fi
+
+        if [[ -n "$EFI_PART" ]]; then
+            [[ -b "$EFI_PART" ]] || die "ESP не найден: $EFI_PART"
+            [[ "$(blkid -s TYPE -o value "$EFI_PART" 2>/dev/null)" == "vfat" ]] || \
+                die "ESP должен быть vfat: $EFI_PART"
+        else
+            local -a esps=()
+            local n
+            while IFS='|' read -r n _; do
+                [[ -n "$n" ]] && esps+=("$n")
+            done < <(list_esp_candidates)
+            (( ${#esps[@]} > 0 )) || die "Не найден ESP. Укажите --efi /dev/... вручную."
+            EFI_PART="${esps[0]}"
+        fi
+
+        ESP_DISK="/dev/$(disk_of_part "$EFI_PART")"
+        ESP_NUM=$(partition_number_from_path "$EFI_PART")
+        [[ -n "$ESP_NUM" && -b "$ESP_DISK" ]] || die "Не удалось определить ESP-диск"
+        return 0
+    fi
+
+    die "Не задан диск или раздел"
+}
+
+# ─────────────────────────────────────────────────────────────
+# Разметка и форматирование
+# ─────────────────────────────────────────────────────────────
+wipe_disk() {
+    local disk="$1"
+    local p
+    while read -r p; do
+        [[ -n "$p" ]] || continue
+        umount -R "$p" 2>/dev/null || true
+        swapoff "$p" 2>/dev/null || true
+    done < <(lsblk -lpno NAME "$disk" | tac)
+
+    run_logged sgdisk --zap-all "$disk" || wipefs -a "$disk" >/dev/null 2>&1 || true
+    run_logged wipefs -a "$disk"
+
+    local size_mb
+    size_mb=$(( $(blockdev --getsize64 "$disk") / 1024 / 1024 ))
+    run_logged dd if=/dev/zero of="$disk" bs=1M count=1 conv=fsync status=none
+    run_logged dd if=/dev/zero of="$disk" bs=1M count=1 seek=$((size_mb - 1)) conv=fsync status=none
+
+    run_logged partprobe "$disk" || true
+    udevadm settle || true
+}
+
+partition_disk() {
+    local disk="$1"
+    local total_mb usable_mb root_start_mb root_mb home_start_mb
+    local esp_start_mb=1 esp_end_mb=1025
+
+    total_mb=$(( $(blockdev --getsize64 "$disk") / 1024 / 1024 ))
+    if (( total_mb < 32 * 1024 )); then
+        die "Диск слишком мал: $((total_mb / 1024)) ГБ (минимум 32 ГБ)"
+    fi
+
+    ui_step "Разметка $disk (${total_mb} МиБ)"
+    wipe_disk "$disk"
+
+    run_logged parted -s "$disk" mklabel gpt
+
+    if [[ "$BOOT_MODE" == "uefi" ]]; then
+        run_logged parted -s "$disk" mkpart ESP fat32 "${esp_start_mb}MiB" "${esp_end_mb}MiB"
+        run_logged parted -s "$disk" set 1 esp on
+        root_start_mb="$esp_end_mb"
+    else
+        run_logged parted -s "$disk" mkpart bios_grub 1MiB 2MiB
+        run_logged parted -s "$disk" set 1 bios_grub on
+        root_start_mb=2
+    fi
+
+    usable_mb=$(( total_mb - root_start_mb ))
+    root_mb=$(( usable_mb / 2 ))
+    (( root_mb > 60 * 1024 )) && root_mb=$((60 * 1024))
+    (( root_mb < ROOT_MIN_MB )) && root_mb="$ROOT_MIN_MB"
+    if (( root_mb > usable_mb - HOME_MIN_MB )); then
+        root_mb=$(( usable_mb - HOME_MIN_MB ))
+    fi
+    if (( root_mb < 24 * 1024 )); then
+        die "После ESP и /home для корня остаётся слишком мало места"
+    fi
+    home_start_mb=$(( root_start_mb + root_mb ))
+
+    run_logged parted -s "$disk" mkpart root ext4 "${root_start_mb}MiB" "${home_start_mb}MiB"
+    run_logged parted -s "$disk" mkpart home ext4 "${home_start_mb}MiB" 100%
+
+    run_logged partprobe "$disk" || true
+    udevadm settle || true
+    sleep 1
+
+    if [[ "$BOOT_MODE" == "uefi" ]]; then
+        EFI_PART=$(part_path "$disk" 1)
+        ROOT_PART=$(part_path "$disk" 2)
+        HOME_PART=$(part_path "$disk" 3)
+        ESP_DISK="$disk"
+        ESP_NUM=1
+    else
+        EFI_PART=""
+        ROOT_PART=$(part_path "$disk" 2)
+        HOME_PART=$(part_path "$disk" 3)
+        ESP_DISK=""
+        ESP_NUM=""
+    fi
+
+    local p
+    for p in "$ROOT_PART" "$HOME_PART" ${EFI_PART:+"$EFI_PART"}; do
+        [[ -b "$p" ]] || die "Раздел не появился после разметки: $p"
+    done
+
+    ui_success "Разметка создана: root ${root_mb} МиБ, home — остальное"
+    log "Partitions: EFI=$EFI_PART ROOT=$ROOT_PART HOME=$HOME_PART"
+}
+
+format_partitions() {
+    if [[ -n "$EFI_PART" && "$PARTITION_MODE" == "0" ]]; then
+        ui_step "Форматирование ESP: $EFI_PART"
+        run_logged wipefs -a "$EFI_PART"
+        run_logged mkfs.fat -F32 -n EFI "$EFI_PART"
+    fi
+
+    ui_step "Форматирование корня: $ROOT_PART (ext4)"
+    run_logged wipefs -a "$ROOT_PART"
+    run_logged mkfs.ext4 -F -L root -m 1 "$ROOT_PART"
+
+    if [[ -n "$HOME_PART" && "$PARTITION_MODE" == "0" ]]; then
+        ui_step "Форматирование /home: $HOME_PART (ext4)"
+        run_logged wipefs -a "$HOME_PART"
+        run_logged mkfs.ext4 -F -L home -m 1 "$HOME_PART"
+    fi
+
+    ui_success "Файловые системы готовы"
+}
+
+mount_target() {
+    ui_step "Монтирование целевой системы"
+    run_logged mkdir -p "$MOUNTPOINT"
+    run_logged mount "$ROOT_PART" "$MOUNTPOINT"
+    MOUNTED=1
+
+    if [[ -n "$HOME_PART" ]]; then
+        run_logged mkdir -p "$MOUNTPOINT/home"
+        run_logged mount "$HOME_PART" "$MOUNTPOINT/home"
+    fi
+
+    if [[ -n "$EFI_PART" ]]; then
+        run_logged mkdir -p "$MOUNTPOINT/boot/efi"
+        run_logged mount "$EFI_PART" "$MOUNTPOINT/boot/efi"
+    fi
+
+    ui_success "Разделы смонтированы в $MOUNTPOINT"
+}
+
+create_swapfile() {
+    local free_mb size="4G" count=4096
+    free_mb=$(df -m "$MOUNTPOINT" | awk 'NR==2 {print $4}')
+    if (( free_mb < 6144 )); then
+        size="2G"; count=2048
+        ui_warn "Мало свободного места, swap-файл будет 2 ГБ"
+    fi
+    if (( free_mb < 3072 )); then
+        ui_warn "Свободного места меньше 3 ГБ — swap-файл пропущен"
+        SWAP_SIZE="0"
+        return 0
+    fi
+
+    ui_step "Создание swap-файла ${size}"
+    if ! run_logged fallocate -l "$size" "$MOUNTPOINT/swapfile"; then
+        run_logged dd if=/dev/zero of="$MOUNTPOINT/swapfile" bs=1M count="$count" status=none
+    fi
+    run_logged chmod 600 "$MOUNTPOINT/swapfile"
+    run_logged mkswap "$MOUNTPOINT/swapfile"
+    SWAP_SIZE="$size"
+}
+
+unmount_target() {
+    ui_step "Размонтирование"
+    if [[ -f "$MOUNTPOINT/swapfile" ]]; then
+        swapoff "$MOUNTPOINT/swapfile" 2>/dev/null || true
+    fi
+    umount -R "$MOUNTPOINT" 2>/dev/null || true
+    MOUNTED=0
+    ui_success "Разделы размонтированы"
 }

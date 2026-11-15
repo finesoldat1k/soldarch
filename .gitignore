@@ -1,0 +1,16 @@
+# Артефакты сборки
+/out/
+/work-*/
+/build/
+/test/
+
+# Офлайн-репозиторий внутри ISO (собирается scripts/build-repo.sh)
+/airootfs/opt/soldarch/repo/*
+!/airootfs/opt/soldarch/repo/.gitkeep
+
+# Пакетные артефакты
+*.pkg.tar.zst
+*.pkg.tar.zst.sig
+*.pkg.tar.zst.part
+packages/*/src/
+packages/*/pkg/

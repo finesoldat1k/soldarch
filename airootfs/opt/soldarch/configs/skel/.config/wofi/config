@@ -1,0 +1,6 @@
+show-icons=true
+terminal=foot
+drun-display-format={name}
+width=600
+height=420
+location=center
