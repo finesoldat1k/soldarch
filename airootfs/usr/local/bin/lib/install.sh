@@ -183,7 +183,7 @@ verify_install() {
         fi
     }
 
-    check_file "$MOUNTPOINT/etc/skel/.config/hypr/hyprland.conf"
+    check_file "$MOUNTPOINT/etc/skel/.config/hypr/hyprland.lua"
     check_file "$MOUNTPOINT/etc/skel/.config/waybar/config.jsonc"
     check_file "$MOUNTPOINT/etc/sddm.conf.d/10-soldarch.conf"
     check_file "$MOUNTPOINT/boot/grub/grub.cfg"

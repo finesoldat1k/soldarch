@@ -22,7 +22,17 @@ fi
     exit 1
 }
 
-mkdir -p "$ROOT/out" "$ROOT/work-$MODE" "$BUILD_DIR" "$PKG_CACHE"
+mkdir -p "$ROOT/out" "$BUILD_DIR" "$PKG_CACHE"
+
+# mkarchiso переиспользует рабочий каталог по маркерам *_run_once и может
+# собрать ISO со старой базой. Для предсказуемой сборки всегда начинаем
+# с чистого каталога.
+WORK_DIR="$ROOT/work-$MODE"
+if [[ -d "$WORK_DIR" ]]; then
+    chmod -R u+w "$WORK_DIR" 2>/dev/null || true
+    rm -rf "$WORK_DIR"
+fi
+mkdir -p "$WORK_DIR"
 
 # Отдельный pacman.conf только для сборки live-системы: все пакеты
 # берутся из локального репозитория, без обращения к зеркалам.

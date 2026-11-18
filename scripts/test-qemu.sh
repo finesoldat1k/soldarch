@@ -71,10 +71,18 @@ if ! grep -q 'Soldarch установлен' "$SERIAL_INSTALL"; then
 fi
 echo "==> Установка завершена. Загружаю диск."
 
-# Загрузка установленной системы. Таймаут нужен, потому что SDDM/Hyprland
-# продолжают работать после успешного старта.
-timeout 600 qemu-system-x86_64 "${COMMON[@]}" "${FIRMWARE[@]}" \
-    -boot c -serial "file:$SERIAL_BOOT" || true
+# Загрузка установленной системы. Ждём приглашение входа на serial,
+# затем завершаем QEMU, не дожидаясь полного таймаута.
+qemu-system-x86_64 "${COMMON[@]}" "${FIRMWARE[@]}" \
+    -boot c -serial "file:$SERIAL_BOOT" &
+BOOT_PID=$!
+for _ in $(seq 1 600); do
+    grep -q 'arch login:' "$SERIAL_BOOT" 2>/dev/null && break
+    kill -0 "$BOOT_PID" 2>/dev/null || break
+    sleep 1
+done
+kill "$BOOT_PID" 2>/dev/null || true
+wait "$BOOT_PID" 2>/dev/null || true
 
 echo "==> Лог загрузки: $SERIAL_BOOT"
 grep -E 'Reached target|Started|Failed|sddm|Hyprland|login|Arch Linux' \
