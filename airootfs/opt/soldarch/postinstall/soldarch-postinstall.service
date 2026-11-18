@@ -1,13 +1,13 @@
 [Unit]
 Description=Soldarch Post-Install Setup
-Documentation=man:soldarch-postinstall(8)
-After=network-online.target
-Wants=network-online.target
+Documentation=https://github.com/
+After=network.target
 ConditionPathExists=!/etc/soldarch/post-install.done
 
 [Service]
 Type=oneshot
 ExecStart=/usr/lib/soldarch/soldarch-postinstall.sh
+TimeoutStartSec=10min
 StandardOutput=journal
 StandardError=journal
 

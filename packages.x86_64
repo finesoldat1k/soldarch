@@ -46,7 +46,7 @@ man-db
 man-pages
 pacman-contrib
 
-# GUI Installer (GTK4 + GStreamer)
+# GUI Installer: GTK4 + GStreamer + kiosk Wayland
 gtk4
 libadwaita
 gstreamer
@@ -55,5 +55,9 @@ gst-plugins-good
 gst-plugins-bad
 gst-plugins-ugly
 gst-libav
+gst-plugin-gtk4
 python-gobject
 python-cairo
+cage
+mesa
+ttf-dejavu

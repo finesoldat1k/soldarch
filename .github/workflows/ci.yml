@@ -151,8 +151,11 @@ jobs:
         run: |
           shellcheck scripts/*.sh
           shellcheck airootfs/usr/local/bin/soldarch-install
+          shellcheck airootfs/usr/local/bin/soldarch-gui-installer
           shellcheck airootfs/usr/local/bin/lib/*.sh
           shellcheck airootfs/opt/soldarch/target-setup.sh
+          shellcheck airootfs/opt/soldarch/postinstall/soldarch-postinstall.sh
+          shellcheck airootfs/root/.bash_profile
 
   python-lint:
     name: Lint Python GUI
@@ -166,7 +169,7 @@ jobs:
 
       - name: Run ruff
         run: |
-          ruff check airootfs/usr/local/bin/soldarch-gui-installer/
+          ruff check airootfs/usr/local/lib/soldarch/gui/
 
   notify:
     name: Notify on Failure

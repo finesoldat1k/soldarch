@@ -190,7 +190,7 @@ select_esp_interactive() {
         ui_info "Используется существующий ESP: $EFI_PART"
     else
         local choice
-        choice=$(ui_menu "Какой раздел использовать как /boot/efi? Он НЕ будет форматироваться:" "${items[@]}") || return 1
+        choice=$(ui_menu "Какой раздел использовать как ESP (монтируется в /boot)? Он НЕ будет форматироваться:" "${items[@]}") || return 1
         (( choice == 0 )) && return 1
         EFI_PART="${esps[$((choice - 1))]}"
     fi
@@ -419,8 +419,10 @@ mount_target() {
     fi
 
     if [[ -n "$EFI_PART" ]]; then
-        run_logged mkdir -p "$MOUNTPOINT/boot/efi"
-        run_logged mount "$EFI_PART" "$MOUNTPOINT/boot/efi"
+        # ESP монтируется в /boot: ядро и initramfs остаются на незашифрованном
+        # разделе, поэтому GRUB может загрузить их и при LUKS-корне.
+        run_logged mkdir -p "$MOUNTPOINT/boot"
+        run_logged mount "$EFI_PART" "$MOUNTPOINT/boot"
     fi
 
     ui_success "Разделы смонтированы в $MOUNTPOINT"

@@ -112,6 +112,13 @@ add_pkg() {
 }
 
 while IFS= read -r pkg; do add_pkg "$pkg"; done < <(read_pkg_file "$TARGET_FILE")
+# Пакеты профилей нужны в репозитории, даже если профиль не выбран:
+# установщик добавляет их к базовому набору на этапе pacstrap.
+for extra in "$ROOT/airootfs/opt/soldarch/packages-developer.txt" \
+             "$ROOT/airootfs/opt/soldarch/packages-gaming.txt"; do
+    [[ -f "$extra" ]] || continue
+    while IFS= read -r pkg; do add_pkg "$pkg"; done < <(read_pkg_file "$extra")
+done
 while IFS= read -r pkg; do add_pkg "$pkg"; done < <(read_pkg_file "$LIVE_FILE")
 
 msg "Пакетов в запросе: ${#requested[@]}"

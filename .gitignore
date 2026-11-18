@@ -14,3 +14,7 @@
 *.pkg.tar.zst.part
 packages/*/src/
 packages/*/pkg/
+
+# Python
+__pycache__/
+*.pyc

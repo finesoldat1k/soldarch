@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# soldarch-gui-installer — запуск графического установщика Soldarch.
+# Без аргументов открывает GUI; с аргументами передаёт их CLI-установщику.
+set -Eeuo pipefail
+
+if (( $# > 0 )); then
+    exec /usr/local/bin/soldarch-install "$@"
+fi
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-/run/user/0}"
+mkdir -p "$XDG_RUNTIME_DIR"
+chmod 700 "$XDG_RUNTIME_DIR" 2>/dev/null || true
+
+export GDK_BACKEND=wayland
+export GTK_THEME=Adwaita:dark
+
+# Маркер для .bash_profile: GUI действительно стартовал. Если композитор
+# не смог запуститься, маркера нет и live-система откатится на TUI.
+touch /run/soldarch-gui-started
+
+exec python3 /usr/local/lib/soldarch/gui/main.py

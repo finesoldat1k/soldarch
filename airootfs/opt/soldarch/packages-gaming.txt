@@ -1,0 +1,20 @@
+# Soldarch — профиль «Игры».
+# Устанавливается поверх базового набора packages-target.txt.
+
+steam
+lutris
+wine
+winetricks
+gamemode
+lib32-gamemode
+mangohud
+lib32-mangohud
+gamescope
+lib32-vulkan-radeon
+lib32-vulkan-intel
+vulkan-tools
+lib32-vulkan-icd-loader
+vulkan-validation-layers
+lib32-vulkan-validation-layers
+vkd3d
+lib32-vkd3d

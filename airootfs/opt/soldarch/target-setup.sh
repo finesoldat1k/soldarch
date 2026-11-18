@@ -96,6 +96,7 @@ ln -sf /usr/lib/systemd/user/pipewire-pulse.socket /etc/systemd/user/sockets.tar
 ln -sf /usr/lib/systemd/user/wireplumber.service /etc/systemd/user/default.target.wants/wireplumber.service
 
 # ── SDDM ─────────────────────────────────────────────────────
+mkdir -p /etc/sddm.conf.d
 systemctl enable sddm.service
 
 if [[ "${SOLDARCH_AUTOLOGIN}" == "1" ]]; then
@@ -104,6 +105,12 @@ if [[ "${SOLDARCH_AUTOLOGIN}" == "1" ]]; then
 User=${SOLDARCH_USER}
 Session=hyprland.desktop
 EOF
+fi
+
+# ── Пост-установка (один раз при первой загрузке) ────────────
+if [[ -f /usr/lib/systemd/system/soldarch-postinstall.service ]]; then
+    mkdir -p /etc/soldarch
+    systemctl enable soldarch-postinstall.service
 fi
 
 # ── zapret ───────────────────────────────────────────────────
@@ -115,25 +122,42 @@ if [[ -f /usr/lib/systemd/system/zapret-list-update.timer ]]; then
 fi
 
 # ── LUKS: crypttab, initcpio, GRUB ───────────────────────────
-if [[ "${SOLDARCH_LUKS}" == "1" ]]; then
+if [[ "${SOLDARCH_LUKS:-0}" == "1" ]]; then
     log "Настройка LUKS2..."
 
-    # crypttab для root и home
+    root_src=""
+    home_src=""
+    for dev in /dev/disk/by-partlabel/root_crypt /dev/disk/by-partlabel/root; do
+        if [[ -b "$dev" ]]; then root_src="$dev"; break; fi
+    done
+    for dev in /dev/disk/by-partlabel/home_crypt /dev/disk/by-partlabel/home; do
+        if [[ -b "$dev" ]]; then home_src="$dev"; break; fi
+    done
+    [[ -n "$root_src" ]] || die "LUKS: не найден контейнер root"
+    [[ -n "$home_src" ]] || die "LUKS: не найден контейнер home"
+
+    root_luks_uuid=$(blkid -s UUID -o value "$root_src")
+    home_luks_uuid=$(blkid -s UUID -o value "$home_src")
+    [[ -n "$root_luks_uuid" && -n "$home_luks_uuid" ]] || die "LUKS: не удалось прочитать UUID"
+
     cat >/etc/crypttab <<EOF
-cryptroot UUID=$(blkid -s UUID -o value /dev/disk/by-partlabel/root_crypt 2>/dev/null || blkid -s UUID -o value /dev/disk/by-partlabel/root 2>/dev/null) none luks,discard
-crypthome UUID=$(blkid -s UUID -o value /dev/disk/by-partlabel/home_crypt 2>/dev/null || blkid -s UUID -o value /dev/disk/by-partlabel/home 2>/dev/null) none luks,discard
+cryptroot UUID=${root_luks_uuid} none luks,discard
+crypthome UUID=${home_luks_uuid} none luks,discard
 EOF
 
-    # mkinitcpio: добавляем encrypt hook
-    if ! grep -q '^HOOKS=.*encrypt' /etc/mkinitcpio.conf; then
-        sed -i 's/^HOOKS=(\(.*\))/HOOKS=(\1 encrypt)/' /etc/mkinitcpio.conf
+    # encrypt должен идти до filesystems, иначе корень не откроется.
+    if ! grep -qE '^HOOKS=.*(^|[[:space:]])encrypt([[:space:]]|\))' /etc/mkinitcpio.conf; then
+        sed -i -E 's/^(HOOKS=\([^)]*)[[:space:]]filesystems/\1 encrypt filesystems/' /etc/mkinitcpio.conf
+        grep -qE '^HOOKS=.*encrypt' /etc/mkinitcpio.conf || \
+            sed -i -E 's/^(HOOKS=\()/\1encrypt /' /etc/mkinitcpio.conf
     fi
 
-    # GRUB: добавляем cryptdevice параметр
-    local root_uuid
-    root_uuid=$(blkid -s UUID -o value /dev/mapper/cryptroot 2>/dev/null || true)
-    if [[ -n "$root_uuid" ]]; then
-        sed -i "s/^GRUB_CMDLINE_LINUX=\"\"/GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$(blkid -s UUID -o value /dev/disk/by-partlabel/root_crypt 2>/dev/null || blkid -s UUID -o value /dev/disk/by-partlabel/root 2>/dev/null):cryptroot root=\/dev\/mapper\/cryptroot\"/" /etc/default/grub
+    # GRUB передаёт ядру LUKS-устройство и корень на mapper.
+    if grep -q '^GRUB_CMDLINE_LINUX=' /etc/default/grub; then
+        sed -i -E "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=${root_luks_uuid}:cryptroot root=/dev/mapper/cryptroot\"|" /etc/default/grub
+    else
+        printf 'GRUB_CMDLINE_LINUX="cryptdevice=UUID=%s:cryptroot root=/dev/mapper/cryptroot"\n' \
+            "$root_luks_uuid" >>/etc/default/grub
     fi
 fi
 

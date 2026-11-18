@@ -1,6 +1,165 @@
-/* Soldarch Installer Theme - loaded from /usr/share/soldarch/gui/theme.css */
-/* This file can be customized without rebuilding the ISO */
+/* Soldarch Installer — Catppuccin Mocha */
 
-@import url("resource:///org/soldarch/installer/theme.css");
+window {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+}
 
-/* Custom overrides can go here */
+.page {
+    background-color: #1e1e2e;
+    color: #cdd6f4;
+}
+
+.title {
+    font-size: 26px;
+    font-weight: 800;
+    color: #cdd6f4;
+}
+
+.subtitle {
+    font-size: 14px;
+    color: #a6adc8;
+}
+
+.strong {
+    font-weight: 700;
+    color: #cdd6f4;
+}
+
+.muted {
+    font-size: 13px;
+    color: #9399b2;
+}
+
+.caption {
+    font-size: 12px;
+    color: #6c7086;
+}
+
+.error {
+    color: #f38ba8;
+}
+
+.field-label {
+    color: #a6adc8;
+    font-weight: 600;
+}
+
+.nav {
+    background-color: #181825;
+    border-top: 1px solid #313244;
+    padding: 8px 12px;
+}
+
+.step {
+    color: #6c7086;
+    font-size: 12px;
+}
+
+.step.active {
+    color: #89b4fa;
+    font-weight: 700;
+}
+
+.step.done {
+    color: #a6e3a1;
+}
+
+.step-sep {
+    color: #45475a;
+}
+
+button.suggested {
+    background-color: #89b4fa;
+    color: #11111b;
+    font-weight: 700;
+    padding: 7px 22px;
+    border-radius: 8px;
+}
+
+button.suggested:hover {
+    background-color: #b4befe;
+}
+
+button.suggested:disabled {
+    background-color: #45475a;
+    color: #6c7086;
+}
+
+.video {
+    background-color: #11111b;
+    border: 1px solid #313244;
+    border-radius: 10px;
+}
+
+.summary {
+    font-size: 13px;
+    background-color: #181825;
+    border: 1px solid #313244;
+    padding: 14px;
+    border-radius: 8px;
+    color: #cdd6f4;
+}
+
+.log {
+    font-size: 11px;
+    background-color: #11111b;
+    color: #a6adc8;
+}
+
+frame {
+    border: 1px solid #313244;
+    border-radius: 8px;
+    background-color: #181825;
+}
+
+frame > label {
+    color: #89b4fa;
+    font-weight: 700;
+}
+
+.card.selected {
+    border: 2px solid #89b4fa;
+    background-color: #1e1e2e;
+}
+
+.card {
+    background-color: #181825;
+}
+
+progressbar {
+    min-height: 14px;
+}
+
+progressbar progress {
+    background-color: #89b4fa;
+    border-radius: 7px;
+}
+
+progressbar trough {
+    background-color: #313244;
+    border-radius: 7px;
+}
+
+checkbutton {
+    color: #cdd6f4;
+}
+
+entry {
+    background-color: #181825;
+    color: #cdd6f4;
+    border: 1px solid #313244;
+    border-radius: 6px;
+    padding: 5px 8px;
+}
+
+combobox button {
+    background-color: #181825;
+    color: #cdd6f4;
+    border: 1px solid #313244;
+}
+
+.status {
+    font-size: 14px;
+    color: #a6adc8;
+}

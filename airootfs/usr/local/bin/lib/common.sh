@@ -300,6 +300,10 @@ Soldarch installer
   --profile <name>          профиль пакетов: minimal|developer|gaming|full (default: minimal)
   --luks                    зашифровать / и /home (LUKS2)
   --luks-password <pass>    пароль для LUKS (требует --luks)
+  --username <имя>          пользователь (default: iam)
+  --hostname <имя>          хостнейм (default: arch)
+  --locale <локаль>         локаль (default: en_US.UTF-8)
+  --timezone <зона>         часовой пояс (default: Europe/Moscow)
   -h, --help                эта справка
 EOF
 }
@@ -333,6 +337,18 @@ parse_args() {
             --luks-password)
                 [[ $# -ge 2 ]] || die "--luks-password требует значение"
                 LUKS_PASSWORD="$2"; shift 2 ;;
+            --username)
+                [[ $# -ge 2 ]] || die "--username требует значение"
+                USERNAME="$2"; shift 2 ;;
+            --hostname)
+                [[ $# -ge 2 ]] || die "--hostname требует значение"
+                HOSTNAME="$2"; shift 2 ;;
+            --locale)
+                [[ $# -ge 2 ]] || die "--locale требует значение"
+                LOCALE="$2"; shift 2 ;;
+            --timezone)
+                [[ $# -ge 2 ]] || die "--timezone требует значение"
+                TIMEZONE="$2"; shift 2 ;;
             -h|--help) usage; exit 0 ;;
             *) die "Неизвестный параметр: $1" ;;
         esac
@@ -347,6 +363,9 @@ parse_args() {
 
     if (( LUKS == 1 )) && [[ -z "$LUKS_PASSWORD" ]]; then
         die "LUKS требует --luks-password"
+    fi
+    if (( LUKS == 1 )) && [[ "$TARGET_MODE" == "partition" ]]; then
+        die "LUKS пока поддерживается только при установке на весь диск (--disk)"
     fi
 }
 

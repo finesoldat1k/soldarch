@@ -54,33 +54,39 @@ generate_target_fstab() {
 
 filter_packages_by_profile() {
     local profile="$1"
-    local -a filtered=()
+    local -a extras=()
+    local pkg file
 
     case "$profile" in
-        minimal)
-            # Только базовые пакеты (уже в TARGET_PACKAGES)
-            filtered=("${TARGET_PACKAGES[@]}")
-            ;;
+        minimal) ;;
         developer)
-            filtered=("${TARGET_PACKAGES[@]}" base-devel git github-cli docker docker-compose podman buildah code nodejs npm pnpm python python-pip python-poetry rustup go lua luarocks zig cmake meson ninja gdb valgrind strace ltrace perf)
+            extras+=("$SOLDARCH_DIR/packages-developer.txt")
             ;;
         gaming)
-            filtered=("${TARGET_PACKAGES[@]}" steam lutris wine winetricks gamemode lib32-gamemode mangohud lib32-mangohud vulkan-tools lib32-vulkan-icd-loader vulkan-validation-layers lib32-vulkan-validation-layers dxvk-bin vkd3d lib32-vkd3d)
+            extras+=("$SOLDARCH_DIR/packages-gaming.txt")
             ;;
         full)
-            filtered=("${TARGET_PACKAGES[@]}" base-devel git github-cli docker docker-compose podman buildah code nodejs npm pnpm python python-pip python-poetry rustup go lua luarocks zig cmake meson ninja gdb valgrind strace ltrace perf steam lutris wine winetricks gamemode lib32-gamemode mangohud lib32-mangohud vulkan-tools lib32-vulkan-icd-loader vulkan-validation-layers lib32-vulkan-validation-layers dxvk-bin vkd3d lib32-vkd3d)
+            extras+=("$SOLDARCH_DIR/packages-developer.txt"
+                     "$SOLDARCH_DIR/packages-gaming.txt")
             ;;
         *)
-            die "Неизвестный профиль: $profile"
+            die "Неизвестный профиль: $profile (minimal|developer|gaming|full)"
             ;;
     esac
+
+    local -a filtered=("${TARGET_PACKAGES[@]}")
+    for file in "${extras[@]}"; do
+        [[ -f "$file" ]] || die "Нет файла профиля: $file"
+        while IFS= read -r pkg; do
+            [[ -n "$pkg" ]] && filtered+=("$pkg")
+        done < <(sed 's/#.*//' "$file" | tr -s '[:space:]' '\n' | sed '/^$/d')
+    done
 
     # Убираем дубликаты
     local -A seen=()
     local -a unique=()
-    local pkg
     for pkg in "${filtered[@]}"; do
-        [[ -n "${seen[$pkg]}" ]] || { unique+=("$pkg"); seen[$pkg]=1; }
+        [[ -n "${seen[$pkg]:-}" ]] || { unique+=("$pkg"); seen[$pkg]=1; }
     done
     TARGET_PACKAGES=("${unique[@]}")
 }
@@ -131,6 +137,12 @@ EOF
     chmod 600 "$setup_env"
     umask 022
 
+    # Пост-установочный скрипт и unit кладём в целевую систему.
+    install -Dm755 "$SOLDARCH_DIR/postinstall/soldarch-postinstall.sh" \
+        "$MOUNTPOINT/usr/lib/soldarch/soldarch-postinstall.sh"
+    install -Dm644 "$SOLDARCH_DIR/postinstall/soldarch-postinstall.service" \
+        "$MOUNTPOINT/usr/lib/systemd/system/soldarch-postinstall.service"
+
     cp "$SOLDARCH_DIR/target-setup.sh" "$MOUNTPOINT/root/soldarch-setup.sh"
     chmod 755 "$MOUNTPOINT/root/soldarch-setup.sh"
 
@@ -157,7 +169,7 @@ install_bootloader() {
 
         if ! run_chroot grub-install \
             --target=x86_64-efi \
-            --efi-directory=/boot/efi \
+            --efi-directory=/boot \
             --bootloader-id=Arch \
             --no-nvram \
             --recheck; then
@@ -165,9 +177,9 @@ install_bootloader() {
         fi
 
         # Fallback для прошивок, которые не видят NVRAM-запись.
-        run_logged mkdir -p "$MOUNTPOINT/boot/efi/EFI/BOOT"
-        run_logged cp "$MOUNTPOINT/boot/efi/EFI/Arch/grubx64.efi" \
-            "$MOUNTPOINT/boot/efi/EFI/BOOT/BOOTX64.EFI"
+        run_logged mkdir -p "$MOUNTPOINT/boot/EFI/BOOT"
+        run_logged cp "$MOUNTPOINT/boot/EFI/Arch/grubx64.efi" \
+            "$MOUNTPOINT/boot/EFI/BOOT/BOOTX64.EFI"
 
         # efibootmgr должен работать в live-окружении: в chroot нет
         # смонтированного efivarfs, и запись NVRAM молча не создаётся.
@@ -191,6 +203,14 @@ GRUB_CMDLINE_LINUX=""
 GRUB_DISABLE_OS_PROBER=true
 GRUB_PRELOAD_MODULES="part_gpt part_msdos"
 EOF
+
+    if (( LUKS == 1 )); then
+        local root_luks_uuid
+        root_luks_uuid=$(blkid -s UUID -o value /dev/disk/by-partlabel/root_crypt 2>/dev/null || true)
+        [[ -n "$root_luks_uuid" ]] || die "LUKS: не удалось определить UUID корневого контейнера"
+        sed -i -E "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=${root_luks_uuid}:cryptroot root=/dev/mapper/cryptroot\"|" \
+            "$MOUNTPOINT/etc/default/grub"
+    fi
     if (( SERIAL_CONSOLE == 1 )); then
         cat >>"$MOUNTPOINT/etc/default/grub" <<'EOF'
 GRUB_TERMINAL="console serial"
@@ -334,6 +354,12 @@ run_installation() {
             poweroff) log "Auto poweroff"; sync; poweroff -f ;;
             *) log "Auto: no reboot" ;;
         esac
+        exit 0
+    fi
+
+    # Неинтерактивный запуск из GUI/скрипта: не перезагружаемся сами.
+    if [[ "$ACTION" == "none" ]] || (( ASSUME_YES == 1 )); then
+        ui_info "Установка завершена. Перезагрузитесь вручную."
         exit 0
     fi
 

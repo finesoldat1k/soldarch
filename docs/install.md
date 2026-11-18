@@ -48,6 +48,11 @@ sudo dd if=soldarch-*.iso of=/dev/sdX bs=4M status=progress conv=fsync
 | `soldarch.profile=minimal\|developer\|gaming\|full` | Профиль пакетов (default: minimal) |
 | `soldarch.luks=1` | Включить LUKS2 шифрование |
 | `soldarch.luks-password=secret` | Пароль для LUKS |
+| `soldarch.username=iam` | Имя пользователя |
+| `soldarch.hostname=arch` | Хостнейм |
+| `soldarch.locale=en_US.UTF-8` | Локаль |
+| `soldarch.timezone=Europe/Moscow` | Часовой пояс |
+| `soldarch.gui=0` | Не запускать GUI, сразу открыть TUI |
 | `soldarch.autologin=1` | Автологин в SDDM (только для тестов) |
 | `soldarch.serial=1` | Включить serial console (для QEMU) |
 
@@ -60,10 +65,14 @@ kernel cmdline: soldarch.auto=1 soldarch.disk=/dev/nvme0n1 soldarch.password=MyP
 
 ## Графический установщик (GUI)
 
-После загрузки live-системы автоматически запускается графический установщик:
+После загрузки live-системы на tty1 автоматически запускается графический
+установщик внутри kiosk-композитора `cage`. Если композитор или GUI
+недоступны, открывается TUI-установщик. Принудительно выбрать TUI можно
+параметром `soldarch.gui=0`.
 
 ### 1. Приветствие
-- Воспроизводится первая серия «Атаки титанов» (S1E1)
+- Воспроизводится открытый мультфильм «Big Buck Bunny» (720p, CC BY 3.0)
+- Кнопка «Без звука» отключает звук
 - Нажмите **«Начать установку»**
 
 ### 2. Выбор диска и разметка
@@ -76,17 +85,21 @@ kernel cmdline: soldarch.auto=1 soldarch.disk=/dev/nvme0n1 soldarch.password=MyP
   - Выбираете существующий корневой раздел (форматируется)
   - Выбираете существующий ESP (не форматируется)
   - Остальные разделы не трогаются
-- **LUKS2 шифрование** (опционально):
+- **LUKS2 шифрование** (опционально, только для всего диска):
   - Шифрует `/` и `/home` отдельными контейнерами
   - Требует пароль при каждой загрузке
+  - ESP остаётся незашифрованным и монтируется в `/boot`
 
 ### 3. Профиль пакетов
 | Профиль | Размер | Содержимое |
 |---------|--------|------------|
-| **Минимум** (~3.5 GiB) | Базовая система + Hyprland + SDDM + waybar + foot + wofi + mako + NetworkManager + pipewire + fish + throne-bin + zapret |
-| **Разработка** (~5.2 GiB) | Минимум + base-devel, git, docker, podman, VS Code, Node.js, Python, Rust, Go, Zig, CMake, GDB |
-| **Игры** (~8.1 GiB) | Минимум + Steam, Lutris, Wine, gamemode, MangoHud, DXVK, VKD3D |
-| **Полный** (~12.4 GiB) | Все профили вместе |
+| **Стандарт** (~7 GiB) | Базовая система + Hyprland + SDDM + waybar + foot + wofi + mako + NetworkManager + PipeWire + fish + throne-bin + zapret |
+| **Разработка** (~10 GiB) | Стандарт + base-devel, git, Docker, Podman, VS Code, Node.js, Python, Rust, Go, Zig, CMake, GDB |
+| **Игры** (~11 GiB) | Стандарт + Steam, Lutris, Wine, gamemode, MangoHud, gamescope, DXVK, VKD3D |
+| **Всё вместе** (~14 GiB) | Стандарт + разработка + игры |
+
+Списки пакетов лежат в `airootfs/opt/soldarch/packages-target.txt`,
+`packages-developer.txt` и `packages-gaming.txt`.
 
 ### 4. Пользователь и сеть
 - Пользователь: **iam** (фиксировано)
@@ -159,8 +172,8 @@ pacman -Ss <запрос>
 yay -Ss <запрос>  # если установлен AUR-хелпер
 
 # Логи установки
-cat /var/log/soldarch-install.log
-cat /var/log/soldarch-postinstall.log
+cat /tmp/soldarch-install.log       # в live-системе, во время установки
+cat /var/log/soldarch-postinstall.log  # после первой загрузки
 
 # Статус zapret
 systemctl status zapret
@@ -181,6 +194,7 @@ hyprctl reload
 | Нет звука | `systemctl --user restart pipewire pipewire-pulse wireplumber` |
 | Забыт пароль LUKS | Восстановление невозможно без бэкапа заголовка LUKS |
 | Ошибка GRUB при установке | Убедитесь, что диск не GPT+BIOS без bios_grub раздела |
+| Чёрный экран вместо GUI | Проверьте `/tmp/soldarch-gui.log`; загрузитесь с `soldarch.gui=0` для TUI |
 
 ---
 
@@ -190,7 +204,9 @@ hyprctl reload
 2. Загрузитесь в Soldarch live
 3. Выберите режим **«Существующий раздел»**
 4. Укажите пустой раздел для `/` и существующий ESP
-5. GRUB автоматически добавит Windows в меню
+5. GRUB можно дополнительно настроить для Windows: включите `os-prober`
+   в `/etc/default/grub` (`GRUB_DISABLE_OS_PROBER=false`) и выполните
+   `sudo grub-mkconfig -o /boot/grub/grub.cfg`
 
 ---
 

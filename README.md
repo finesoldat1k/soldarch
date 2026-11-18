@@ -24,14 +24,18 @@ Arch Linux без брендинга.
 
 После загрузки live-ISO автоматически запускается GTK4-установщик:
 
-1. **Приветствие** — воспроизводится 1-я серия «Атаки титанов» (S1E1, 720p HEVC)
+1. **Приветствие** — воспроизводится открытый мультфильм «Big Buck Bunny» (720p, CC BY 3.0)
 2. **Диск и разметка** — весь диск (GPT: ESP + `/` + `/home`) или существующий раздел (dual-boot)
 3. **LUKS2** — опциональное шифрование корня и home
-4. **Профиль пакетов** — minimal / developer / gaming / full
+4. **Профиль пакетов** — Стандарт / Разработка / Игры / Всё вместе
 5. **Пользователь** — iam, пароль, хостнейм arch, локаль, таймзона
 6. **Подтверждение** — сводка параметров + галочка согласия
 7. **Установка** — видео продолжает играть, прогресс-бар показывает этапы
 8. **Готово** — кнопки «Перезагрузить» / «Выключить»
+
+GUI работает внутри kiosk-композитора `cage` на tty1. Если композитор
+недоступен, автоматически открывается TUI. Отключить GUI можно параметром
+`soldarch.gui=0` в kernel cmdline.
 
 ## Сборка
 
@@ -40,6 +44,7 @@ Arch Linux без брендинга.
 Сборка идёт от обычного пользователя, без sudo.
 
 ```bash
+./scripts/download-video.sh # открытое видео для установщика (Big Buck Bunny, H.264)
 ./scripts/build-repo.sh     # офлайн-репозиторий (долго, качает пакеты)
 ./scripts/build-iso.sh      # release ISO
 ./scripts/build-iso.sh test-auto  # тестовая ISO с автоустановкой
@@ -86,6 +91,7 @@ soldarch.luks-password=secret  # пароль LUKS
 soldarch.reboot=1|0       # reboot / poweroff после установки
 soldarch.autologin=1      # автологин в SDDM (только тесты)
 soldarch.serial=1         # serial console (для QEMU)
+soldarch.gui=0            # не запускать GUI, сразу TUI
 soldarch.username=iam     # пользователь (фиксирован)
 ```
 
@@ -105,6 +111,20 @@ soldarch.username=iam     # пользователь (фиксирован)
 Тестовая ISO содержит kernel cmdline с автоустановкой на `/dev/vda`.
 Логи: `test/serial-install.log` и `test/serial-boot.log`.
 Диск `test/disk.qcow2` пересоздаётся при каждом запуске.
+
+### Ручная проверка GUI
+
+```bash
+./scripts/build-iso.sh release
+./scripts/test-qemu-gui.sh
+```
+
+Откроется окно QEMU (UEFI, 8 ГиБ RAM, диск 48 ГиБ) с графическим
+установщиком. Первая загрузка идёт с ISO, после установки и перезагрузки —
+с виртуального диска. Состояние: `test-gui/disk.qcow2`, serial-лог:
+`test-gui/serial.log`. Пересоздать диск: `rm -rf test-gui`. Оставить диск
+для повторного запуска: `SOLDARCH_KEEP_DISK=1 ./scripts/test-qemu-gui.sh`.
+Отключить звук: `SOLDARCH_AUDIO=none ./scripts/test-qemu-gui.sh`.
 
 ## CI/CD (GitHub Actions)
 
@@ -127,25 +147,29 @@ gh workflow run ci.yml -f test_type=both
 .
 ├── airootfs/
 │   ├── usr/local/bin/
-│   │   ├── soldarch-install          # CLI установщик
-│   │   ├── soldarch-gui-installer    # GUI установщик (GTK4)
-│   │   └── lib/                      # общие библиотеки
+│   │   ├── soldarch-install          # CLI/TUI установщик
+│   │   ├── soldarch-gui-installer    # запуск GUI (GTK4)
+│   │   └── lib/                      # общие библиотеки установщика
+│   ├── usr/local/lib/soldarch/gui/   # Python-код GUI-установщика
+│   ├── usr/share/soldarch/
+│   │   ├── gui/theme.css             # тема Catppuccin
+│   │   └── video/                    # Big Buck Bunny (CC BY 3.0)
 │   ├── opt/soldarch/
 │   │   ├── configs/                  # целевые конфиги (skel, etc)
-│   │   ├── packages-target.txt       # список пакетов таргета
+│   │   ├── packages-target.txt       # базовый набор пакетов
+│   │   ├── packages-developer.txt    # профиль «Разработка»
+│   │   ├── packages-gaming.txt       # профиль «Игры»
+│   │   ├── postinstall/              # post-install скрипт и systemd unit
 │   │   ├── target-setup.sh           # настройка таргета в chroot
 │   │   └── repo/                     # офлайн-репозиторий
-│   ├── usr/lib/soldarch/
-│   │   └── soldarch-postinstall.sh   # post-install скрипт
-│   └── usr/lib/systemd/system/
-│       └── soldarch-postinstall.service
 ├── packages/
 │   └── soldarch-zapret/              # локальный пакет zapret
 ├── scripts/
 │   ├── build-repo.sh                 # сборка офлайн-репо
 │   ├── build-iso.sh                  # сборка ISO (mkarchiso)
-│   ├── test-qemu.sh                  # QEMU тесты
-│   └── download-anime.sh             # скачивание аниме для ISO
+│   ├── test-qemu.sh                  # автоматические QEMU тесты
+│   ├── test-qemu-gui.sh              # ручная проверка GUI в QEMU
+│   └── download-video.sh             # открытое видео для ISO
 ├── docs/
 │   └── install.md                    # полное руководство по установке
 ├── .github/workflows/ci.yml          # GitHub Actions CI

@@ -10,14 +10,19 @@
 ## [1.0.0] - 2026-11-18
 
 ### Added
-- **Графический установщик (GUI)** на GTK4 + GStreamer с поддержкой воспроизведения видео
-- Воспроизведение 1-й серии «Атаки титанов» (S1E1, 720p HEVC) во время установки
-- **LUKS2 шифрование** корневого раздела и /home с отдельными паролями
-- **Профили пакетов**: minimal, developer, gaming, full
+- **Графический установщик (GUI)** на GTK4 + GStreamer, запускается в kiosk-композиторе
+  `cage` на tty1; при недоступности GUI автоматически открывается TUI
+- Воспроизведение открытого мультфильма «Big Buck Bunny» (720p, CC BY 3.0)
+  на экранах приветствия и установки; кнопка «Без звука»
+- **LUKS2 шифрование** корневого раздела и /home отдельными контейнерами;
+  ESP монтируется в `/boot`, чтобы GRUB мог загрузить ядро и initramfs
+- **Профили пакетов**: Стандарт, Разработка, Игры, Всё вместе
+  (`packages-target.txt`, `packages-developer.txt`, `packages-gaming.txt`)
 - **Post-install systemd unit** (`soldarch-postinstall.service`):
   - Обновление mirrorlist через reflector
   - Создание XDG пользовательских директорий
   - Проверка обновлений прошивок (fwupdmgr)
+  - Еженедельный fstrim
   - Очистка кэша pacman
   - Генерация MOTD
 - **GitHub Actions CI/CD**:
@@ -26,6 +31,7 @@
   - QEMU тесты UEFI и BIOS
   - Линтинг shell-скриптов (shellcheck) и Python (ruff)
 - Документация: `docs/install.md` с полным руководством
+- Скрипт `scripts/download-video.sh` для загрузки открытого видео
 - Поддержка `xdg-user-dirs`, `reflector`, `fwupd` в целевой системе
 
 ### Changed
@@ -33,15 +39,23 @@
 - **foot**: секция `[colors]` переименована в `[colors-dark]`
 - **build-iso.sh**: принудительная очистка work-директории перед сборкой
 - **test-qemu.sh**: ожидание `arch login:` в serial вместо полного таймаута
-- CLI установщик (`soldarch-install`): новые аргументы `--profile`, `--luks`, `--luks-password`
+- CLI установщик (`soldarch-install`): новые аргументы `--profile`, `--luks`,
+  `--luks-password`, `--username`, `--hostname`, `--locale`, `--timezone`, `--no-reboot`
+- Режим раздела форматирует только выбранный корень; ESP не форматируется
+- GUI-установщик вызывает CLI с `--auto --no-reboot` и сам показывает результат
 
 ### Fixed
-- Исправлено воспроизведение видео в foot (поддержка HEVC через gst-libav)
-- GRUB корректно генерируется для LUKS (cryptdevice параметр)
-- mkinitcpio включает `encrypt` хук при LUKS
+- GUI-установщик больше не падает с `SyntaxError` и корректно заполняет конфигурацию
+- В live-ISO добавлены `cage`, GTK4, GStreamer и `gst-plugin-gtk`
+- Автозапуск GUI на tty1 с откатом на TUI; повторный TUI не запускается
+  после завершения GUI (защита от случайной переустановки)
+- GRUB корректно генерируется для LUKS (`cryptdevice` параметр)
+- mkinitcpio ставит `encrypt` до `filesystems`
+- `--yes --no-reboot` не перезагружает систему
 
 ### Removed
 - Старый `hyprland.conf` (несовместим с Hyprland 0.57+)
+- Защищённое авторским правом видео и скрипт `download-anime.sh`
 
 ---
 
@@ -78,7 +92,6 @@
 ## Планируемые изменения (roadmap)
 
 ### v1.1.0
-- [ ] Выбор профиля пакетов в GUI установщике (уже реализовано в коде, нужна интеграция)
 - [ ] Поддержка Btrfs + снапшоты (snapper)
 - [ ] TPM2 + systemd-homed для LUKS
 - [ ] Ventoy-совместимый образ
