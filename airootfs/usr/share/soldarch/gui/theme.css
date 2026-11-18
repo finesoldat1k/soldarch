@@ -1,0 +1,6 @@
+/* Soldarch Installer Theme - loaded from /usr/share/soldarch/gui/theme.css */
+/* This file can be customized without rebuilding the ISO */
+
+@import url("resource:///org/soldarch/installer/theme.css");
+
+/* Custom overrides can go here */

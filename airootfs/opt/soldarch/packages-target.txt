@@ -49,6 +49,10 @@ file-roller
 7zip
 unzip
 zip
+reflector
+fwupd
+xdg-user-dirs
+pacman-contrib
 
 # ── Сеть, звук, Bluetooth ────────────────────────────────────
 networkmanager
@@ -124,8 +128,21 @@ xcb-util-renderutil
 xcb-util-wm
 polkit
 
+# ── GUI Installer (GTK4 + GStreamer) ────────────────────────
+gtk4
+libadwaita
+gstreamer
+gst-plugins-base
+gst-plugins-good
+gst-plugins-bad
+gst-plugins-ugly
+gst-libav
+python-gobject
+python-cairo
+
 # ── Разработка ───────────────────────────────────────────────
 git
+github-cli
 autoconf
 automake
 binutils
@@ -152,14 +169,30 @@ which
 neovim
 python
 python-pip
+python-poetry
 nodejs
 npm
+pnpm
 go
 rust
+rustup
 rust-analyzer
 clang
 lld
 gdb
+valgrind
+strace
+ltrace
+perf
+zig
+cmake
+meson
+ninja
+code
+docker
+docker-compose
+podman
+buildah
 
 # ── Общение ──────────────────────────────────────────────────
 telegram-desktop
@@ -182,6 +215,9 @@ hunspell-ru
 
 # ── Игры ─────────────────────────────────────────────────────
 steam
+lutris
+wine
+winetricks
 gamemode
 lib32-gamemode
 mangohud
@@ -189,6 +225,12 @@ lib32-mangohud
 gamescope
 lib32-vulkan-radeon
 lib32-vulkan-intel
+vulkan-tools
+lib32-vulkan-icd-loader
+vulkan-validation-layers
+lib32-vulkan-validation-layers
+vkd3d
+lib32-vkd3d
 
 # ── Предустановленные сервисы ───────────────────────────────
 iptables

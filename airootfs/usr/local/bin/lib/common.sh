@@ -34,6 +34,11 @@ PASSWORD=""
 AUTOLOGIN=0
 SERIAL_CONSOLE=0
 
+# Новые параметры
+PROFILE="minimal"       # minimal | developer | gaming | full
+LUKS=0                  # 0 | 1
+LUKS_PASSWORD=""
+
 BOOT_MODE=""            # uefi | bios
 ESP_DISK=""
 ESP_NUM=""
@@ -260,6 +265,9 @@ parse_cmdline() {
             soldarch.autologin=1) AUTOLOGIN=1 ;;
             soldarch.serial=1)    SERIAL_CONSOLE=1 ;;
             soldarch.username=*)  USERNAME="${tok#*=}" ;;
+            soldarch.profile=*)   PROFILE="${tok#*=}" ;;
+            soldarch.luks=1)      LUKS=1 ;;
+            soldarch.luks-password=*) LUKS_PASSWORD="${tok#*=}" ;;
         esac
     done
     if (( AUTO == 1 )); then
@@ -289,6 +297,9 @@ Soldarch installer
   --no-reboot               не перезагружаться
   --autologin               включить автологин в SDDM (для тестов)
   --serial-console          добавить console=ttyS0 в GRUB (для тестов)
+  --profile <name>          профиль пакетов: minimal|developer|gaming|full (default: minimal)
+  --luks                    зашифровать / и /home (LUKS2)
+  --luks-password <pass>    пароль для LUKS (требует --luks)
   -h, --help                эта справка
 EOF
 }
@@ -315,6 +326,13 @@ parse_args() {
             --no-reboot) ACTION="none"; shift ;;
             --autologin) AUTOLOGIN=1; shift ;;
             --serial-console) SERIAL_CONSOLE=1; shift ;;
+            --profile)
+                [[ $# -ge 2 ]] || die "--profile требует значение"
+                PROFILE="$2"; shift 2 ;;
+            --luks) LUKS=1; shift ;;
+            --luks-password)
+                [[ $# -ge 2 ]] || die "--luks-password требует значение"
+                LUKS_PASSWORD="$2"; shift 2 ;;
             -h|--help) usage; exit 0 ;;
             *) die "Неизвестный параметр: $1" ;;
         esac
@@ -325,6 +343,10 @@ parse_args() {
         [[ -n "$PASSWORD" ]] || die "Авторежиму нужен --password"
         [[ -n "$ACTION" ]] || ACTION="poweroff"
         ASSUME_YES=1
+    fi
+
+    if (( LUKS == 1 )) && [[ -z "$LUKS_PASSWORD" ]]; then
+        die "LUKS требует --luks-password"
     fi
 }
 

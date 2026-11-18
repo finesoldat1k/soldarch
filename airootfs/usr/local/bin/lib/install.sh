@@ -6,7 +6,9 @@ show_summary() {
     printf '  Цель              : %s\n' "$( [[ "$TARGET_MODE" == "disk" ]] && printf 'диск %s (полное стирание)' "$TARGET_DISK" || printf 'раздел %s (без изменения других разделов)' "$ROOT_PART" )"
     printf '  Загрузка          : %s\n' "${BOOT_MODE^^}"
     printf '  Разметка          : %s\n' "$( (( PARTITION_MODE == 0 )) && printf 'ESP + / + /home, ext4' || printf 'существующий ESP + /, ext4' )"
+    printf '  LUKS шифрование   : %s\n' "$( (( LUKS == 1 )) && printf 'ВКЛ (LUKS2)' || printf 'ВЫКЛ' )"
     printf '  Swap              : %s\n' "${SWAP_SIZE} swap-файл"
+    printf '  Профиль           : %s\n' "$PROFILE"
     printf '  Пользователь      : %s\n' "$USERNAME"
     printf '  Хостнейм          : %s\n' "$HOSTNAME"
     printf '  Локаль / время    : %s / %s\n' "$LOCALE" "$TIMEZONE"
@@ -50,8 +52,45 @@ generate_target_fstab() {
     ui_success "fstab создан"
 }
 
+filter_packages_by_profile() {
+    local profile="$1"
+    local -a filtered=()
+
+    case "$profile" in
+        minimal)
+            # Только базовые пакеты (уже в TARGET_PACKAGES)
+            filtered=("${TARGET_PACKAGES[@]}")
+            ;;
+        developer)
+            filtered=("${TARGET_PACKAGES[@]}" base-devel git github-cli docker docker-compose podman buildah code nodejs npm pnpm python python-pip python-poetry rustup go lua luarocks zig cmake meson ninja gdb valgrind strace ltrace perf)
+            ;;
+        gaming)
+            filtered=("${TARGET_PACKAGES[@]}" steam lutris wine winetricks gamemode lib32-gamemode mangohud lib32-mangohud vulkan-tools lib32-vulkan-icd-loader vulkan-validation-layers lib32-vulkan-validation-layers dxvk-bin vkd3d lib32-vkd3d)
+            ;;
+        full)
+            filtered=("${TARGET_PACKAGES[@]}" base-devel git github-cli docker docker-compose podman buildah code nodejs npm pnpm python python-pip python-poetry rustup go lua luarocks zig cmake meson ninja gdb valgrind strace ltrace perf steam lutris wine winetricks gamemode lib32-gamemode mangohud lib32-mangohud vulkan-tools lib32-vulkan-icd-loader vulkan-validation-layers lib32-vulkan-validation-layers dxvk-bin vkd3d lib32-vkd3d)
+            ;;
+        *)
+            die "Неизвестный профиль: $profile"
+            ;;
+    esac
+
+    # Убираем дубликаты
+    local -A seen=()
+    local -a unique=()
+    local pkg
+    for pkg in "${filtered[@]}"; do
+        [[ -n "${seen[$pkg]}" ]] || { unique+=("$pkg"); seen[$pkg]=1; }
+    done
+    TARGET_PACKAGES=("${unique[@]}")
+}
+
 run_pacstrap() {
     ui_step "Установка пакетов (офлайн-репозиторий)"
+
+    # Фильтруем пакеты по профилю
+    filter_packages_by_profile "$PROFILE"
+
     ui_info "Пакетов: ${#TARGET_PACKAGES[@]}. Это самый долгий этап."
 
     if ! run_with_spinner "Установка системы" \
@@ -61,8 +100,6 @@ run_pacstrap() {
         die "Не удалось установить пакеты"
     fi
 
-    # Пакеты больше не нужны: ISO остаётся источником, а кэш в target
-    # только занимает место на корневом разделе.
     if [[ -d "$MOUNTPOINT/var/cache/pacman/pkg" ]]; then
         find "$MOUNTPOINT/var/cache/pacman/pkg" -mindepth 1 -delete 2>/dev/null || true
     fi
@@ -87,6 +124,9 @@ SOLDARCH_LOCALE='$LOCALE'
 SOLDARCH_KEYMAP='$KEYMAP'
 SOLDARCH_AUTOLOGIN='$AUTOLOGIN'
 SOLDARCH_SERIAL_CONSOLE='$SERIAL_CONSOLE'
+SOLDARCH_LUKS='$LUKS'
+SOLDARCH_LUKS_PASSWORD='$LUKS_PASSWORD'
+SOLDARCH_PROFILE='$PROFILE'
 EOF
     chmod 600 "$setup_env"
     umask 022

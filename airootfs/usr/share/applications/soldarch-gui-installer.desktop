@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Soldarch Installer
+Name[ru]=Установщик Soldarch
+Comment=Graphical installer for Soldarch Linux
+Comment[ru]=Графический установщик Soldarch Linux
+Exec=soldarch-gui-installer
+Icon=soldarch-installer
+Terminal=false
+Categories=System;Settings;
+StartupNotify=true

@@ -45,3 +45,15 @@ rsync
 man-db
 man-pages
 pacman-contrib
+
+# GUI Installer (GTK4 + GStreamer)
+gtk4
+libadwaita
+gstreamer
+gst-plugins-base
+gst-plugins-good
+gst-plugins-bad
+gst-plugins-ugly
+gst-libav
+python-gobject
+python-cairo

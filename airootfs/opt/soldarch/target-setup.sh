@@ -114,6 +114,29 @@ if [[ -f /usr/lib/systemd/system/zapret-list-update.timer ]]; then
     systemctl enable zapret-list-update.timer
 fi
 
+# ── LUKS: crypttab, initcpio, GRUB ───────────────────────────
+if [[ "${SOLDARCH_LUKS}" == "1" ]]; then
+    log "Настройка LUKS2..."
+
+    # crypttab для root и home
+    cat >/etc/crypttab <<EOF
+cryptroot UUID=$(blkid -s UUID -o value /dev/disk/by-partlabel/root_crypt 2>/dev/null || blkid -s UUID -o value /dev/disk/by-partlabel/root 2>/dev/null) none luks,discard
+crypthome UUID=$(blkid -s UUID -o value /dev/disk/by-partlabel/home_crypt 2>/dev/null || blkid -s UUID -o value /dev/disk/by-partlabel/home 2>/dev/null) none luks,discard
+EOF
+
+    # mkinitcpio: добавляем encrypt hook
+    if ! grep -q '^HOOKS=.*encrypt' /etc/mkinitcpio.conf; then
+        sed -i 's/^HOOKS=(\(.*\))/HOOKS=(\1 encrypt)/' /etc/mkinitcpio.conf
+    fi
+
+    # GRUB: добавляем cryptdevice параметр
+    local root_uuid
+    root_uuid=$(blkid -s UUID -o value /dev/mapper/cryptroot 2>/dev/null || true)
+    if [[ -n "$root_uuid" ]]; then
+        sed -i "s/^GRUB_CMDLINE_LINUX=\"\"/GRUB_CMDLINE_LINUX=\"cryptdevice=UUID=$(blkid -s UUID -o value /dev/disk/by-partlabel/root_crypt 2>/dev/null || blkid -s UUID -o value /dev/disk/by-partlabel/root 2>/dev/null):cryptroot root=\/dev\/mapper\/cryptroot\"/" /etc/default/grub
+    fi
+fi
+
 # ── Журнал ───────────────────────────────────────────────────
 mkdir -p /var/log/journal
 systemd-tmpfiles --create --prefix /var/log/journal 2>/dev/null || true

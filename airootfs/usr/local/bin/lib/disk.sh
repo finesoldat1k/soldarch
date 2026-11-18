@@ -277,6 +277,15 @@ wipe_disk() {
     udevadm settle || true
 }
 
+luks_format_partition() {
+    local part="$1" password="$2" label="$3"
+    ui_step "LUKS2 форматирование $part ($label)"
+    echo -n "$password" | run_logged cryptsetup luksFormat --type luks2 --label "$label" "$part" -
+    echo -n "$password" | run_logged cryptsetup open "$part" "$label" -
+    sleep 1
+    ui_success "LUKS контейнер $label создан и открыт"
+}
+
 partition_disk() {
     local disk="$1"
     local total_mb usable_mb root_start_mb root_mb home_start_mb
@@ -314,8 +323,14 @@ partition_disk() {
     fi
     home_start_mb=$(( root_start_mb + root_mb ))
 
-    run_logged parted -s "$disk" mkpart root ext4 "${root_start_mb}MiB" "${home_start_mb}MiB"
-    run_logged parted -s "$disk" mkpart home ext4 "${home_start_mb}MiB" 100%
+    if (( LUKS == 1 )); then
+        # LUKS: создаём один раздел для root и один для home (оба зашифрованы)
+        run_logged parted -s "$disk" mkpart root_crypt ext4 "${root_start_mb}MiB" "${home_start_mb}MiB"
+        run_logged parted -s "$disk" mkpart home_crypt ext4 "${home_start_mb}MiB" 100%
+    else
+        run_logged parted -s "$disk" mkpart root ext4 "${root_start_mb}MiB" "${home_start_mb}MiB"
+        run_logged parted -s "$disk" mkpart home ext4 "${home_start_mb}MiB" 100%
+    fi
 
     run_logged partprobe "$disk" || true
     udevadm settle || true
@@ -323,14 +338,24 @@ partition_disk() {
 
     if [[ "$BOOT_MODE" == "uefi" ]]; then
         EFI_PART=$(part_path "$disk" 1)
-        ROOT_PART=$(part_path "$disk" 2)
-        HOME_PART=$(part_path "$disk" 3)
+        if (( LUKS == 1 )); then
+            ROOT_PART=$(part_path "$disk" 2)
+            HOME_PART=$(part_path "$disk" 3)
+        else
+            ROOT_PART=$(part_path "$disk" 2)
+            HOME_PART=$(part_path "$disk" 3)
+        fi
         ESP_DISK="$disk"
         ESP_NUM=1
     else
         EFI_PART=""
-        ROOT_PART=$(part_path "$disk" 2)
-        HOME_PART=$(part_path "$disk" 3)
+        if (( LUKS == 1 )); then
+            ROOT_PART=$(part_path "$disk" 2)
+            HOME_PART=$(part_path "$disk" 3)
+        else
+            ROOT_PART=$(part_path "$disk" 2)
+            HOME_PART=$(part_path "$disk" 3)
+        fi
         ESP_DISK=""
         ESP_NUM=""
     fi
@@ -340,8 +365,16 @@ partition_disk() {
         [[ -b "$p" ]] || die "Раздел не появился после разметки: $p"
     done
 
+    if (( LUKS == 1 )); then
+        # Форматируем LUKS контейнеры
+        luks_format_partition "$ROOT_PART" "$LUKS_PASSWORD" "cryptroot"
+        luks_format_partition "$HOME_PART" "$LUKS_PASSWORD" "crypthome"
+        ROOT_PART="/dev/mapper/cryptroot"
+        HOME_PART="/dev/mapper/crypthome"
+    fi
+
     ui_success "Разметка создана: root ${root_mb} МиБ, home — остальное"
-    log "Partitions: EFI=$EFI_PART ROOT=$ROOT_PART HOME=$HOME_PART"
+    log "Partitions: EFI=$EFI_PART ROOT=$ROOT_PART HOME=$HOME_PART LUKS=$LUKS"
 }
 
 format_partitions() {
@@ -351,14 +384,24 @@ format_partitions() {
         run_logged mkfs.fat -F32 -n EFI "$EFI_PART"
     fi
 
-    ui_step "Форматирование корня: $ROOT_PART (ext4)"
-    run_logged wipefs -a "$ROOT_PART"
-    run_logged mkfs.ext4 -F -L root -m 1 "$ROOT_PART"
+    if (( LUKS == 1 )); then
+        ui_step "Форматирование корня (ext4 внутри LUKS): $ROOT_PART"
+        run_logged mkfs.ext4 -F -L root -m 1 "$ROOT_PART"
 
-    if [[ -n "$HOME_PART" && "$PARTITION_MODE" == "0" ]]; then
-        ui_step "Форматирование /home: $HOME_PART (ext4)"
-        run_logged wipefs -a "$HOME_PART"
-        run_logged mkfs.ext4 -F -L home -m 1 "$HOME_PART"
+        if [[ -n "$HOME_PART" && "$PARTITION_MODE" == "0" ]]; then
+            ui_step "Форматирование /home (ext4 внутри LUKS): $HOME_PART"
+            run_logged mkfs.ext4 -F -L home -m 1 "$HOME_PART"
+        fi
+    else
+        ui_step "Форматирование корня: $ROOT_PART (ext4)"
+        run_logged wipefs -a "$ROOT_PART"
+        run_logged mkfs.ext4 -F -L root -m 1 "$ROOT_PART"
+
+        if [[ -n "$HOME_PART" && "$PARTITION_MODE" == "0" ]]; then
+            ui_step "Форматирование /home: $HOME_PART (ext4)"
+            run_logged wipefs -a "$HOME_PART"
+            run_logged mkfs.ext4 -F -L home -m 1 "$HOME_PART"
+        fi
     fi
 
     ui_success "Файловые системы готовы"

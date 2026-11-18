@@ -1,0 +1,180 @@
+name: Soldarch CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 2 * * 0'  # Еженедельно в воскресенье 02:00 UTC
+  workflow_dispatch:
+    inputs:
+      test_type:
+        description: 'Тип теста'
+        required: true
+        default: 'both'
+        type: choice
+        options:
+          - uefi
+          - bios
+          - both
+
+env:
+  ISO_DIR: ./out
+  TEST_DISK_SIZE: 20G
+
+jobs:
+  build-repo:
+    name: Build Offline Repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y pacman-contrib curl jq fakeroot
+
+      - name: Build repository
+        run: |
+          ./scripts/build-repo.sh
+
+      - name: Upload repo artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: soldarch-repo
+          path: airootfs/opt/soldarch/repo/
+          retention-days: 7
+
+  build-iso:
+    name: Build ISO (${{ matrix.mode }})
+    needs: build-repo
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    strategy:
+      matrix:
+        mode: [test-auto]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download repo artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: soldarch-repo
+          path: airootfs/opt/soldarch/repo/
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            arch-install-scripts \
+            dosfstools \
+            e2fsprogs \
+            grub \
+            squashfs-tools \
+            libisoburn \
+            syslinux \
+            xorriso \
+            qemu-system-x86 \
+            ovmf
+
+      - name: Build ISO
+        run: |
+          ./scripts/build-iso.sh ${{ matrix.mode }}
+
+      - name: Upload ISO
+        uses: actions/upload-artifact@v4
+        with:
+          name: soldarch-iso-${{ matrix.mode }}
+          path: out/*.iso
+          retention-days: 7
+
+  test-qemu:
+    name: QEMU Test (${{ matrix.firmware }})
+    needs: build-iso
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      matrix:
+        firmware: [uefi, bios]
+        include:
+          - firmware: uefi
+            script_args: ""
+          - firmware: bios
+            script_args: "bios"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Download ISO
+        uses: actions/download-artifact@v4
+        with:
+          name: soldarch-iso-test-auto
+          path: out/
+
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            qemu-system-x86 \
+            ovmf \
+            socat \
+            ffmpeg
+
+      - name: Run QEMU test
+        run: |
+          chmod +x scripts/test-qemu.sh
+          ./scripts/test-qemu.sh ${{ matrix.script_args }}
+
+      - name: Upload test logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-logs-${{ matrix.firmware }}
+          path: test/
+          retention-days: 7
+
+  lint:
+    name: Lint Shell Scripts
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+
+      - name: Run shellcheck
+        run: |
+          shellcheck scripts/*.sh
+          shellcheck airootfs/usr/local/bin/soldarch-install
+          shellcheck airootfs/usr/local/bin/lib/*.sh
+          shellcheck airootfs/opt/soldarch/target-setup.sh
+
+  python-lint:
+    name: Lint Python GUI
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install ruff
+        run: pip install ruff
+
+      - name: Run ruff
+        run: |
+          ruff check airootfs/usr/local/bin/soldarch-gui-installer/
+
+  notify:
+    name: Notify on Failure
+    needs: [build-repo, build-iso, test-qemu, lint, python-lint]
+    if: failure()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send failure notification
+        run: |
+          echo "Build or test failed. Check GitHub Actions for details."
+          # Можно добавить вебхук для Telegram/Slack/Email
